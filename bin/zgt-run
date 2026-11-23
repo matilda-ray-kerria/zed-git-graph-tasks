@@ -18,7 +18,7 @@
 #   zgt-run rebase <sha> <ref|@>           現在のブランチを ref (無ければコミット) の上にリベースする。方法を選ぶ
 #   zgt-run cherry-pick <sha> [options]    cherry-pick する。options が無ければ方法を選ぶ
 #   zgt-run revert <sha> [options]         revert する (マージコミットは第 1 親を基準にする)
-#   zgt-run push <branch> [remote]         ローカルブランチを push する。方法を選ぶ (既定の remote は origin)
+#   zgt-run push <branch> [remote]         ローカルブランチを push する。方法と upstream の有無を選ぶ (既定の remote は origin)
 #   zgt-run continue                       途中で止まっている merge / rebase / cherry-pick / revert を続行する
 #   zgt-run abort                          同上を中止する
 set -u
@@ -498,9 +498,22 @@ run_pick() {
   execute "$@"
 }
 
+# ブランチの upstream を "remote/branch" の形で出力する (無ければ何も出力しない)
+branch_upstream() {
+  local up_remote up_merge
+  up_remote="$(git config "branch.$1.remote" 2>/dev/null)" || return 0
+  up_merge="$(git config "branch.$1.merge" 2>/dev/null)" || return 0
+  if [ "$up_remote" = "." ]; then
+    printf '%s (ローカルブランチ)\n' "${up_merge#refs/heads/}"
+  else
+    printf '%s/%s\n' "$up_remote" "${up_merge#refs/heads/}"
+  fi
+}
+
 run_push() {
   { [ $# -ge 1 ] && [ $# -le 2 ]; } || usage_error "使い方: zgt-run push <branch> [remote]"
-  local branch="$1" remote="${2:-origin}" refspec counts
+  local branch="$1" remote="${2:-origin}" refspec counts upstream ans
+  local set_upstream=""
   require_repo
   git_has "refs/heads/$branch" || nothing_to_do "$branch はローカルブランチではないので push できません。"
   git remote get-url "$remote" >/dev/null 2>&1 || nothing_to_do "リモート $remote がありません。"
@@ -511,25 +524,37 @@ run_push() {
     target="$branch → $remote ($remote にはまだありません)"
   fi
   refspec="refs/heads/$branch:refs/heads/$branch"
+  upstream="$(branch_upstream "$branch")"
 
   show_context
+  printf '%supstream%s       %s\n' "$B" "$N" "${upstream:-なし}"
   choose "push の方法を選んでください:" \
-    "通常                git push -u (upstream も設定する)" \
+    "通常                git push" \
     "force-with-lease    上書きする。最後に fetch した後で他の人が push していれば中止する" \
     "force               無条件に上書きする (他の人が push したコミットも消える)"
+
+  # 既に同じ upstream なら -u を付けても変わらないので聞かない
+  if [ "$upstream" != "$remote/$branch" ]; then
+    printf 'upstream を %s に設定しますか? (現在: %s) [y/N] ' "$remote/$branch" "${upstream:-なし}"
+    IFS= read -r ans || ans=""
+    is_yes "$ans" && set_upstream="-u"
+  fi
+
   case "$CHOICE" in
-    1) set -- git push -u "$remote" "$refspec" ;;
+    1) set -- git push ;;
     2)
       mode=danger
       message="$remote/$branch をローカルの $branch で上書きします。最後に fetch した後で他の人が push していた場合は中止されます。"
-      set -- git push --force-with-lease --force-if-includes "$remote" "$refspec"
+      set -- git push --force-with-lease --force-if-includes
       ;;
     3)
       mode=danger
       message="$remote/$branch を無条件に上書きします。他の人が push したコミットも消えます。"
-      set -- git push --force "$remote" "$refspec"
+      set -- git push --force
       ;;
   esac
+  [ -n "$set_upstream" ] && set -- "$@" "$set_upstream"
+  set -- "$@" "$remote" "$refspec"
   echo
   show_command "$@"
   show_message

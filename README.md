@@ -17,13 +17,13 @@ Zed のグローバル `tasks.json` に差し込むインストーラ付き。
 | Rebase current branch onto this… | ① 通常 ② `-i`（interactive） | 両方 |
 | Cherry-pick `<sha>` onto current branch… | ① 通常 ② `-x`（元のコミットを記録） ③ `--no-commit`（コミットはしない） | 両方 |
 | Revert `<sha>` | `git revert --no-edit`（y/N） | 両方 |
-| Push `<ref>` → origin… | ① 通常（`-u` で upstream も設定） ② `--force-with-lease --force-if-includes` ③ `--force` | ラベルだけ |
+| Push `<ref>` → origin… | ① 通常 ② `--force-with-lease --force-if-includes` ③ `--force`<br>→ upstream を付けるか y/N（既定は付けない） | ラベルだけ |
 | Continue (merge / rebase / cherry-pick / revert) | 途中で止まっている操作を見分けて `--continue`（エディタは開かない。確認なし） | どこでも |
 | Abort (merge / rebase / cherry-pick / revert) | 途中で止まっている操作を見分けて `--abort`（y/N） | どこでも |
 
 - 番号を選ぶことを実行の確認とみなす。空のまま Enter か `q` でキャンセルする。force-with-lease / force を選んだときだけ、さらに `yes` の入力を求める
 - 実行するとタスクのターミナルに、リポジトリ・現在のブランチ・対象・コマンドを表示する。コンフリクトで止まったときは次にやることを表示する
-- push は、push 先との差（何コミット先行 / 遅れか）も表示する。ローカルブランチ以外のラベルでは実行しない。チェックアウトしていないブランチも push できる
+- push は、push 先との差（何コミット先行 / 遅れか）と現在の upstream も表示する。方法を選んだ後、「upstream を origin/<ブランチ> に設定しますか? [y/N]」と聞く（y なら `-u` を付ける）。すでに同じ upstream が設定されていれば、付けても変わらないので聞かない。ローカルブランチ以外のラベルでは実行しない。チェックアウトしていないブランチも push できる
 - cherry-pick / revert でマージコミットを選んだ場合は、第 1 親を基準にする（`-m 1`）
 - `--squash` / `--no-commit` の後は、Git Panel からコミットするよう案内を出す。読めるよう、Enter を押すまで閉じない
 - Continue は、未解決のコンフリクトが残っていれば実行せずに止まる。マージは Git Panel からコミットしても完了できる
@@ -116,7 +116,7 @@ zgt-run [--confirm | --danger] [--message <文>] [--note <文>] [--require <操�
 | `rebase <sha> <ref\|@>` | ref（無ければコミット）の上にリベースする。方法を選ぶ |
 | `cherry-pick <sha> [オプション]` | cherry-pick する。オプションを渡さなければ方法を選ぶ |
 | `revert <sha> [オプション]` | revert する（y/N） |
-| `push <branch> [remote]` | ローカルブランチを push する。方法を選ぶ（remote の既定は origin） |
+| `push <branch> [remote]` | ローカルブランチを push する。方法と upstream の有無を選ぶ（remote の既定は origin） |
 | `continue` / `abort` | 途中で止まっている merge / rebase / cherry-pick / revert を続行 / 中止する |
 
 ## 注意

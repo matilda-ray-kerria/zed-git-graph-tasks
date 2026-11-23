@@ -190,10 +190,23 @@ out="$(REF="" run_task "$PUSH" 1 2>&1)"
 check "コミット行のメニューには出ない" test $? -eq 98
 run_task "$PUSH" "" >/dev/null
 check "空入力ならキャンセル" test -z "$(git ls-remote origin refs/heads/feature)"
-out="$(run_task "$PUSH" 1 2>&1)"
+out="$(run_task "$PUSH" $'1\n' 2>&1)"
 check "1 でチェックアウトしていないブランチを push できる" test -n "$(git ls-remote origin refs/heads/feature)"
-check "upstream が設定される" test "$(git config branch.feature.merge)" = refs/heads/feature
 check "リモートにまだ無いことを表示する" grep -q 'origin にはまだありません' <<<"$out"
+check "現在の upstream (なし) を表示する" grep -q 'upstream  *なし' <<<"$out"
+check "upstream: Enter なら付けない" test -z "$(git config branch.feature.merge)"
+run_task "$PUSH" $'1\ny' >/dev/null 2>&1
+check "upstream: y なら -u で設定する" test "$(git config branch.feature.merge)" = refs/heads/feature
+out="$(run_task "$PUSH" $'1\n' 2>&1)"
+check "upstream: 既に同じ upstream なら聞かない" test -z "$(grep 'upstream を' <<<"$out")"
+git branch -q --track track-main origin/main
+out="$(REF=track-main run_task "$PUSH" $'1\ny' 2>&1)"
+check "upstream: 別の upstream なら現在の値を示して聞く" grep -q '現在: origin/main' <<<"$out"
+check "upstream: y なら push 先に付け替える" test "$(git config branch.track-main.merge)" = refs/heads/track-main
+git branch -q force-up "$base"
+REF=force-up run_task "$PUSH" $'3\ny\nyes' >/dev/null 2>&1
+check "upstream: force でも付けられる (方法 → upstream → yes の順)" \
+  test -n "$(git ls-remote origin refs/heads/force-up)" -a "$(git config branch.force-up.merge)" = refs/heads/force-up
 out="$(REF=origin/main run_task "$PUSH" 1 2>&1)"
 check "リモートブランチのラベルでは push しない" grep -q 'ローカルブランチではない' <<<"$out"
 
