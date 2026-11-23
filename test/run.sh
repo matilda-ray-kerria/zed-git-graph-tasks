@@ -222,7 +222,7 @@ MERGE='Merge into current branch…'
 REBASE='Rebase current branch onto this…'
 PICK='Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch…'
 REVERT='Revert ${ZED_GIT_SHA_SHORT}'
-PUSH='Push ${ZED_GIT_REF} → origin…'
+PUSH='Push ${ZED_GIT_REF}…'
 CONTINUE='Continue (merge / rebase / cherry-pick / revert)'
 ABORT='Abort (merge / rebase / cherry-pick / revert)'
 
@@ -282,6 +282,25 @@ check "force-with-lease: 他人の push を fetch しただけで取り込んで
 run_task "$PUSH" $'3\nyes' >/dev/null 2>&1
 check "force: yes で無条件に上書きできる" \
   test "$(git ls-remote origin refs/heads/feature | cut -f1)" = "$(git rev-parse feature)"
+check "リモートが 1 つなら push 先を聞かない" test -z "$(grep 'push 先のリモート' <<<"$out")"
+
+git init -q --bare "$WORK/backup.git"
+git remote add backup "$WORK/backup.git"
+out="$(run_task "$PUSH" "" 2>&1)"
+check "リモートが複数なら push 先を選ぶ (空入力ならキャンセル)" \
+  test -n "$(grep 'push 先のリモートを選んでください' <<<"$out")" -a -z "$(git ls-remote backup)"
+check "既定のリモート (追跡先の origin) を先頭に印付きで並べる" grep -q '1) origin .* (既定)$' <<<"$out"
+check "選択肢にリモートの URL を表示する" grep -q "2) backup  $WORK/backup.git" <<<"$out"
+out="$(run_task "$PUSH" $'2\n1\n' 2>&1)"
+check "2 を選ぶと backup に push する" \
+  test "$(git ls-remote backup refs/heads/feature | cut -f1)" = "$(git rev-parse feature)"
+check "選んだリモートとの差を表示する" grep -q 'backup にはまだありません' <<<"$out"
+check "upstream は聞くだけで、Enter なら origin のまま" test "$(git config branch.feature.remote)" = origin
+git config remote.pushDefault backup
+out="$(run_task "$PUSH" "" 2>&1)"
+check "remote.pushDefault があればそれを既定にする" grep -q '1) backup .* (既定)$' <<<"$out"
+git config --unset remote.pushDefault
+git remote remove backup
 
 echo "== checkout"
 REF=feature SHA="$(git rev-parse feature)"

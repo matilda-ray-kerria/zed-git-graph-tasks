@@ -1,8 +1,8 @@
 [
   {
-    "label": "Push ${ZED_GIT_REF} → origin…",
+    "label": "Push ${ZED_GIT_REF}…",
     "command": "__ZGT_RUN__",
-    "args": ["push", "${ZED_GIT_REF}", "origin"],
+    "args": ["push", "${ZED_GIT_REF}"],
     "tags": ["git-command"]
   }
 ]

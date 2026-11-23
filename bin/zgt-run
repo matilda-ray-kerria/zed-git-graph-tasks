@@ -20,7 +20,7 @@
 #   zgt-run rebase <sha> <ref|@>           現在のブランチを ref (無ければコミット) の上にリベースする。方法を選ぶ
 #   zgt-run cherry-pick <sha> [options]    cherry-pick する。options が無ければ方法を選ぶ
 #   zgt-run revert <sha> [options]         revert する (マージコミットは第 1 親を基準にする)
-#   zgt-run push <branch> [remote]         ローカルブランチを push する。方法と upstream の有無を選ぶ (既定の remote は origin)
+#   zgt-run push <branch> [remote]         ローカルブランチを push する。remote を省くとリモートを選ぶ (1 つなら聞かない)。方法と upstream の有無も選ぶ
 #   zgt-run continue                       途中で止まっている merge / rebase / cherry-pick / revert を続行する
 #   zgt-run abort                          同上を中止する
 set -u
@@ -536,13 +536,58 @@ branch_upstream() {
   fi
 }
 
+# 引数なしの git push が使うリモートを出力する
+# (branch.<b>.pushRemote → remote.pushDefault → branch.<b>.remote → origin。git-config(1) の説明どおり)
+default_push_remote() {
+  local r
+  r="$(git config "branch.$1.pushRemote" 2>/dev/null)" ||
+    r="$(git config remote.pushDefault 2>/dev/null)" ||
+    r="$(git config "branch.$1.remote" 2>/dev/null)" ||
+    r=origin
+  printf '%s\n' "$r"
+}
+
+# push 先のリモートを選ばせて remote に入れる。1 つしか無ければ聞かずにそれを使う
+# 既定のリモートを先頭に置いて印を付け、残りは名前順に並べる
+choose_push_remote() {
+  local branch="$1" default r w=0 opt
+  local -a names=() opts=()
+  default="$(default_push_remote "$branch")"
+  git remote get-url "$default" >/dev/null 2>&1 && names=("$default")
+  for r in $(git remote | sort); do
+    [ "$r" = "$default" ] || names+=("$r")
+  done
+  [ ${#names[@]} -gt 0 ] || nothing_to_do "$(msg NO_REMOTES)"
+  if [ ${#names[@]} -eq 1 ]; then
+    remote="${names[0]}"
+    return
+  fi
+  for r in "${names[@]}"; do
+    [ ${#r} -gt "$w" ] && w=${#r}
+  done
+  for r in "${names[@]}"; do
+    opt="$(printf "%-${w}s  %s" "$r" "$(git remote get-url --push "$r" 2>/dev/null)")"
+    [ "$r" = "$default" ] && opt="$opt $(msg PUSH_REMOTE_DEFAULT)"
+    opts+=("$opt")
+  done
+  choose "$(msg PUSH_REMOTE_TITLE)" "${opts[@]}"
+  remote="${names[$((CHOICE - 1))]}"
+  echo
+}
+
 run_push() {
   { [ $# -ge 1 ] && [ $# -le 2 ]; } || usage "push <branch> [remote]"
-  local branch="$1" remote="${2:-origin}" refspec counts upstream ans
+  local branch="$1" remote="${2-}" refspec counts upstream ans
   local set_upstream=""
   require_repo
   git_has "refs/heads/$branch" || nothing_to_do "$(msg NOT_LOCAL_BRANCH "$branch")"
-  git remote get-url "$remote" >/dev/null 2>&1 || nothing_to_do "$(msg NO_SUCH_REMOTE "$remote")"
+  if [ -n "$remote" ]; then
+    git remote get-url "$remote" >/dev/null 2>&1 || nothing_to_do "$(msg NO_SUCH_REMOTE "$remote")"
+    show_context
+  else
+    show_context
+    choose_push_remote "$branch"
+  fi
   if git_has "refs/remotes/$remote/$branch"; then
     counts="$(git rev-list --left-right --count "refs/heads/$branch...refs/remotes/$remote/$branch")"
     target="$(msg PUSH_TARGET_DIFF "$branch" "$remote" "$remote/$branch" \
@@ -553,7 +598,7 @@ run_push() {
   refspec="refs/heads/$branch:refs/heads/$branch"
   upstream="$(branch_upstream "$branch")"
 
-  show_context
+  show_field LABEL_TARGET "$target"
   show_field LABEL_UPSTREAM "${upstream:-$(msg NONE)}"
   choose "$(msg PUSH_TITLE)" \
     "$(msg PUSH_OPT_NORMAL)" \
