@@ -151,8 +151,60 @@ check "マーカーが壊れていれば失敗する" test "$("$ROOT/install.sh"
 check "ファイルは変更されない" cmp -s "$TASKS" "$WORK/bad"
 rm -f "$TASKS"
 
-# ---- ここからタスクの実行 (Zed の代わりに tasks.json から実行する) ----
+echo "== 言語"
+lang_keys() { sed -n 's/^\(MSG_[A-Z0-9_]*\)=.*/\1/p' "$1" | sort; }
+# 各キーの %s / %d の並び (翻訳で差し込む値の数や順番がずれていないか)
+lang_placeholders() {
+  (
+    . "$1"
+    for k in $(lang_keys "$1"); do
+      printf '%s:%s\n' "$k" "$(printf '%s' "${!k}" | grep -o '%[sd]' | tr -d '\n')"
+    done
+  )
+}
+# スクリプトが使っているキー
+used_keys() {
+  grep -ohE '(zgt_msg|msg|say|show_field) [A-Z][A-Z0-9_]+|MSG_[A-Z0-9_]+' \
+    "$ROOT"/bin/zgt-run "$ROOT"/*.sh "$ROOT"/lib/common.sh |
+    sed -E 's/^(zgt_msg|msg|say|show_field) /MSG_/' | sort -u
+}
+STATE="$ZED_CONFIG_DIR/zed-git-graph-tasks/state"
+MESSAGES="$ZED_CONFIG_DIR/zed-git-graph-tasks/messages.sh"
+check "en / ja の言語ファイルのキーが一致する" \
+  test "$(lang_keys "$ROOT/lang/en.sh")" = "$(lang_keys "$ROOT/lang/ja.sh")"
+check "en / ja で差し込む値 (%s / %d) の数と順番が一致する" \
+  test "$(lang_placeholders "$ROOT/lang/en.sh")" = "$(lang_placeholders "$ROOT/lang/ja.sh")"
+check "スクリプトが使うキーはすべて言語ファイルにある" \
+  test -z "$(comm -23 <(used_keys) <(lang_keys "$ROOT/lang/en.sh"))"
+out="$("$ROOT/install.sh" 2>&1)"
+check "--lang を付けなければ英語でインストールする" \
+  test "$(zgt_state_get "$STATE" lang)" = en -a -n "$(grep 'Added' <<<"$out")"
+check "英語のメッセージをラッパーの隣に置く" cmp -s "$MESSAGES" "$ROOT/lang/en.sh"
+check "tasks.json の目印コメントも英語" grep -q 'managed by install.sh' "$TASKS"
+out="$("$ROOT/install.sh" --lang ja 2>&1)"
+check "--lang ja で日本語に切り替わる" \
+  test "$(zgt_state_get "$STATE" lang)" = ja -a -n "$(grep '追加しました' <<<"$out")"
+check "日本語のメッセージに差し替わる" cmp -s "$MESSAGES" "$ROOT/lang/ja.sh"
+check "tasks.json の目印コメントも日本語に差し替わる" \
+  test -n "$(grep 'install.sh が管理' "$TASKS")" -a -z "$(grep 'managed by' "$TASKS")"
 "$ROOT/install.sh" >/dev/null
+check "再インストールでは前回の言語を引き継ぐ" cmp -s "$MESSAGES" "$ROOT/lang/ja.sh"
+check "--help も選んだ言語で出る" grep -q '使い方' <<<"$("$ROOT/install.sh" --help)"
+cp "$TASKS" "$WORK/before-lang"
+out="$("$ROOT/install.sh" --lang xx 2>&1)"
+check "無い言語を指定すると失敗し、選べる言語を示す" \
+  test -n "$(grep 'available: en ja' <<<"$out")" -a "$(zgt_state_get "$STATE" lang)" = ja
+check "無い言語を指定しても tasks.json は変わらない" cmp -s "$TASKS" "$WORK/before-lang"
+"$ROOT/install.sh" --lang=en >/dev/null
+check "--lang=en の形でも切り替えられる" cmp -s "$MESSAGES" "$ROOT/lang/en.sh"
+"$ROOT/install.sh" --lang ja >/dev/null
+out="$("$ROOT/uninstall.sh" 2>&1)"
+check "アンインストールもインストール時の言語で表示する" grep -q '削除しました' <<<"$out"
+check "アンインストールでメッセージも消える" test ! -e "$MESSAGES"
+
+# ---- ここからタスクの実行 (Zed の代わりに tasks.json から実行する) ----
+# 以降のテストは日本語の文言で確かめる
+"$ROOT/install.sh" --lang ja >/dev/null
 git init -q --bare "$WORK/remote.git"
 git clone -q "$WORK/remote.git" "$WORK/repo" 2>/dev/null
 cd "$WORK/repo" || exit 1
@@ -424,6 +476,20 @@ while grep -q '途中で止まっています' <<<"$out"; do
 done
 check "Continue: rebase を最後まで続行できる" test ! -d "$(git rev-parse --git-path rebase-merge)"
 check "rebase: 結果に conflict-a が含まれる" git merge-base --is-ancestor conflict-a HEAD
+
+echo "== 英語の表示"
+git reset -q --hard "$base"
+"$ROOT/install.sh" --lang en >/dev/null
+REF="" SHA="$base"
+out="$(run_task "$CONTINUE" "" 2>&1)"
+check "Continue: 英語で表示する" grep -q 'No merge / rebase / cherry-pick / revert in progress.' <<<"$out"
+REF=feature SHA="$(git rev-parse feature)"
+out="$(run_task "$MERGE" "" 2>&1)"
+check "merge: 選択肢とキャンセルを英語で表示する" \
+  test -n "$(grep 'Merge feature into the current branch. Choose how:' <<<"$out")" \
+  -a -n "$(grep 'Cancelled\.' <<<"$out")"
+out="$(run_task "$PUSH" "" 2>&1)"
+check "push: ラベルを英語で表示する" grep -q '^Upstream   origin/feature' <<<"$out"
 
 cd "$ROOT" || exit 1
 "$ROOT/uninstall.sh" --purge >/dev/null

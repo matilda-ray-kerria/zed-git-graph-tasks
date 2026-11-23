@@ -11,10 +11,46 @@ zgt_die() {
   exit 1
 }
 
+# 使える言語 (lang/*.sh) を空白区切りで出力する
+zgt_languages() {
+  local f out=""
+  for f in "$ZGT_ROOT"/lang/*.sh; do
+    [ -e "$f" ] || continue
+    f="${f##*/}"
+    out="$out ${f%.sh}"
+  done
+  printf '%s\n' "${out# }"
+}
+
+# zgt_load_lang <言語>: lang/<言語>.sh を読み込む。無い言語なら 1 を返す
+zgt_load_lang() {
+  case "$1" in
+    "" | *[!a-zA-Z_-]*) return 1 ;;
+  esac
+  [ -f "$ZGT_ROOT/lang/$1.sh" ] || return 1
+  # shellcheck source=/dev/null
+  . "$ZGT_ROOT/lang/$1.sh"
+}
+
+# zgt_msg <キー> [値...]: 言語ファイルの MSG_<キー> を書式にして値を差し込み、出力する (改行なし)
+zgt_msg() {
+  local _fmt="MSG_$1"
+  shift
+  # shellcheck disable=SC2059
+  printf -- "${!_fmt}" "$@"
+}
+
+# zgt_state_get <state ファイル> <キー>: インストール時に保存した値を出力する (無ければ空)
+zgt_state_get() {
+  if [ -f "$1" ]; then
+    sed -n "s/^$2=//p" "$1" | tail -n 1
+  fi
+}
+
 zgt_require() {
   local cmd
   for cmd in "$@"; do
-    command -v "$cmd" >/dev/null 2>&1 || zgt_die "'$cmd' が見つかりません。インストールしてから再実行してください。"
+    command -v "$cmd" >/dev/null 2>&1 || zgt_die "$(zgt_msg REQUIRE_CMD "$cmd")"
   done
 }
 
@@ -154,7 +190,7 @@ zgt_insert_block() {
 zgt_render_block() {
   local entries
   entries="$("$ZGT_ROOT/build.sh" --runner "$1")" || return 1
-  printf '  %s (install.sh が管理。このブロック内は編集しないでください)\n' "$ZGT_BEGIN"
+  printf '  %s %s\n' "$ZGT_BEGIN" "$(zgt_msg BLOCK_NOTE)"
   printf '%s\n' "$entries" | sed '1d;$d' | sed '$s/$/,/'
   printf '  %s\n' "$ZGT_END"
 }

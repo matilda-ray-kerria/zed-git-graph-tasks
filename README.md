@@ -42,11 +42,20 @@ Zed を動かしているマシンで実行する。
 ```sh
 ./install.sh --dry-run   # 変更内容を確認する(書き換えない)
 ./install.sh             # 追加する。再実行すると最新の内容に更新する
+./install.sh --lang ja   # 表示を日本語にして追加する(既定は英語)
 ./uninstall.sh           # 取り除く(バックアップは残す)
 ./uninstall.sh --purge   # バックアップも含めて削除する
 ```
 
 Zed は `tasks.json` の変更を監視しているので、通常は再起動しなくても反映される。
+
+### 表示の言語
+
+- `--lang en`（英語）か `--lang ja`（日本語）で選ぶ。`--lang=ja` の形でもよい
+- 指定しなかった場合は、前回選んだ言語を引き継ぐ。初回は英語
+- 切り替えたいときは `./install.sh --lang en` のように実行し直す
+- 対象は、`zgt-run` の表示（確認・選択肢・結果）、install / uninstall の表示、`tasks.json` に入る目印コメントの説明文。メニュー名はどちらの言語でも英語のまま
+- 文言は `lang/en.sh` / `lang/ja.sh` にある。インストール時に選んだ言語のファイルを `messages.sh` として `zgt-run` の隣に置き、`zgt-run` はそれを読み込む
 
 ### 変更されるもの
 
@@ -64,7 +73,8 @@ Zed は `tasks.json` の変更を監視しているので、通常は再起動�
   `tasks.json` が無ければ新しく作る。その場合、アンインストール時にほかの内容が無ければファイルごと消す
 - `<設定ディレクトリ>/zed-git-graph-tasks/` に次のものを置く
   - `zgt-run`: 確認付きの実行ラッパー
-  - `state`: インストール時の状態
+  - `messages.sh`: 選んだ言語の文言（`lang/<言語>.sh` のコピー）
+  - `state`: インストール時の状態（`tasks.json` を新しく作ったか、選んだ言語）
   - `backups/`: 書き換えのたびに、直前の `tasks.json` を保存する
 - 設定ディレクトリは macOS なら `~/.config/zed`、Linux なら `${XDG_CONFIG_HOME:-~/.config}/zed`。Flatpak 版などで場所が違う場合は `ZED_CONFIG_DIR=<パス> ./install.sh` のように指定する
 - 書き込む前に結果を検証する。読めない `tasks.json` やマーカーが壊れている場合は何も変更せずに止まる
@@ -140,6 +150,7 @@ install.sh / uninstall.sh   インストール / アンインストール
 build.sh                    tasks.d/*.json を結合する
 tasks.d/                    タスクの断片ファイル
 bin/zgt-run                 確認付きの実行ラッパー
+lang/en.sh / lang/ja.sh     表示の文言 (キーと %s / %d の数・順番を揃える。テストで検査)
 lib/common.sh               共通処理 (tasks.json の解析と差し込み)
 test/run.sh                 テスト
 ```

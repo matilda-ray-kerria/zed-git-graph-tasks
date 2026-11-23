@@ -6,44 +6,52 @@ ZGT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$ZGT_ROOT/lib/common.sh"
 
-usage() {
-  cat <<'EOF'
-使い方: ./install.sh [--dry-run]
-
-tasks.d/*.json を結合し、Zed のグローバル tasks.json に管理ブロックとして追加します。
-既に追加済みならブロックを最新の内容に差し替えます。既存のタスクやコメントには触れません。
-
-  --dry-run  書き換えずに差分だけ表示する
-
-環境変数:
-  ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)
-EOF
-}
+# 引数より先にメッセージが要る場合に備えて英語を読んでおく
+zgt_load_lang en
 
 dry_run=0
+help=0
+lang=""
+bad_arg=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
-    -h | --help)
-      usage
-      exit 0
+    --lang)
+      [ $# -ge 2 ] || zgt_die "$(zgt_msg NEEDS_VALUE --lang)"
+      lang="$2"
+      shift
       ;;
-    *) zgt_die "不明な引数: $1" ;;
+    --lang=*) lang="${1#--lang=}" ;;
+    -h | --help) help=1 ;;
+    *) [ -n "$bad_arg" ] || bad_arg="$1" ;;
   esac
   shift
 done
-
-zgt_require jq awk sed diff
 
 config_dir="$(zgt_config_dir)"
 tasks_file="$config_dir/tasks.json"
 install_dir="$config_dir/$ZGT_NAME"
 runner="$install_dir/zgt-run"
+state="$install_dir/state"
+
+# 言語: --lang > 前回の選択 > 英語
+[ -n "$lang" ] || lang="$(zgt_state_get "$state" lang)"
+[ -n "$lang" ] || lang=en
+zgt_load_lang "$lang" || zgt_die "$(zgt_msg UNKNOWN_LANG "$lang" "$(zgt_languages)")"
+export ZGT_LANG="$lang"
+
+[ -z "$bad_arg" ] || zgt_die "$(zgt_msg UNKNOWN_ARG "$bad_arg")"
+if [ "$help" -eq 1 ]; then
+  printf '%s\n' "$MSG_INSTALL_USAGE"
+  exit 0
+fi
+
+zgt_require jq awk sed diff
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/zgt.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
-zgt_render_block "$runner" >"$tmp/block" || zgt_die "tasks.d の結合に失敗しました"
+zgt_render_block "$runner" >"$tmp/block" || zgt_die "$(zgt_msg BUILD_FAILED)"
 expected="$("$ZGT_ROOT/build.sh" | jq 'length')"
 
 created=0
@@ -56,26 +64,25 @@ if [ ! -e "$tasks_file" ] || ! grep -q '[^[:space:]]' "$tasks_file"; then
   } >"$tmp/new"
   [ -e "$tasks_file" ] || created=1
 else
-  zgt_validate_jsonc "$tasks_file" ||
-    zgt_die "$tasks_file を JSON 配列として読めませんでした。内容を確認してください (変更していません)"
+  zgt_validate_jsonc "$tasks_file" || zgt_die "$(zgt_msg TASKS_UNREADABLE "$tasks_file")"
   case "$(zgt_marker_state "$tasks_file")" in
     ok) zgt_replace_block "$tasks_file" "$tmp/block" >"$tmp/new" ;;
     none)
       zgt_insert_block "$tasks_file" "$tmp/block" >"$tmp/new" ||
-        zgt_die "$tasks_file の先頭に配列の [ が見つかりませんでした (変更していません)"
+        zgt_die "$(zgt_msg NO_ARRAY_START "$tasks_file")"
       ;;
-    *) zgt_die "$tasks_file の管理ブロックのマーカー ($ZGT_BEGIN / $ZGT_END) が壊れています。手で直してから再実行してください (変更していません)" ;;
+    *) zgt_die "$(zgt_msg BROKEN_MARKERS "$tasks_file" "$ZGT_BEGIN" "$ZGT_END")" ;;
   esac
 fi
 
 # 書き込む前に、結果が読めることと管理タスクの数を確認する
-zgt_validate_jsonc "$tmp/new" || zgt_die "生成結果の検証に失敗しました (変更していません)"
+zgt_validate_jsonc "$tmp/new" || zgt_die "$(zgt_msg VERIFY_FAILED)"
 actual="$(zgt_jsonc_to_json "$tmp/new" | jq --arg run "$runner" '[.[] | select(.command == $run)] | length')"
-[ "$actual" = "$expected" ] ||
-  zgt_die "生成結果のタスク数が一致しません (期待 $expected / 実際 $actual)。変更していません"
+[ "$actual" = "$expected" ] || zgt_die "$(zgt_msg COUNT_MISMATCH "$expected" "$actual")"
 
 if [ "$dry_run" -eq 1 ]; then
-  echo "# dry-run: $tasks_file への変更 (書き換えはしていません)"
+  zgt_msg DRYRUN_INSTALL "$tasks_file"
+  echo
   if [ -e "$tasks_file" ]; then
     diff -u "$tasks_file" "$tmp/new" || true
   else
@@ -84,20 +91,23 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-# 先にラッパーを置き、tasks.json から存在しないパスを参照しないようにする
+# 先にラッパーとメッセージを置き、tasks.json から存在しないパスを参照しないようにする
 mkdir -p "$install_dir"
+cp "$ZGT_ROOT/lang/$lang.sh" "$install_dir/messages.sh.tmp"
+mv -f "$install_dir/messages.sh.tmp" "$install_dir/messages.sh"
 cp "$ZGT_ROOT/bin/zgt-run" "$runner.tmp"
 chmod 755 "$runner.tmp"
 mv -f "$runner.tmp" "$runner"
 
-if [ "$created" -eq 1 ]; then
-  printf 'created_tasks_json=1\n' >"$install_dir/state"
-elif [ ! -e "$install_dir/state" ]; then
-  printf 'created_tasks_json=0\n' >"$install_dir/state"
-fi
+# state: tasks.json を新しく作ったか (アンインストール時に消してよいか) と、選んだ言語
+[ "$created" -eq 1 ] || [ "$(zgt_state_get "$state" created_tasks_json)" != 1 ] || created=1
+printf 'created_tasks_json=%s\nlang=%s\n' "$created" "$lang" >"$state"
 
 if [ -e "$tasks_file" ] && cmp -s "$tasks_file" "$tmp/new"; then
-  echo "tasks.json は最新です ($expected 個のタスク)。ラッパーを更新しました: $runner"
+  zgt_msg UP_TO_DATE "$expected" "$runner"
+  echo
+  zgt_msg LANG_AT "$MSG_LANG_NAME"
+  echo
   exit 0
 fi
 
@@ -108,8 +118,13 @@ mkdir -p "$config_dir"
 # シンボリックリンクを壊さないよう、mv ではなく上書きで書き込む
 cat "$tmp/new" >"$tasks_file"
 
-echo "✓ $expected 個のタスクを追加しました: $tasks_file"
-[ -n "$backup" ] && echo "  バックアップ: $backup"
-echo "  ラッパー:     $runner"
+zgt_msg INSTALLED "$expected" "$tasks_file"
 echo
-echo "Zed の Git Graph でブランチ名のラベルを右クリック → Custom Commands から使えます。"
+[ -n "$backup" ] && zgt_msg BACKUP_AT "$backup" && echo
+zgt_msg RUNNER_AT "$runner"
+echo
+zgt_msg LANG_AT "$MSG_LANG_NAME"
+echo
+echo
+zgt_msg HOW_TO_USE
+echo

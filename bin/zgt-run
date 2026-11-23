@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # zed-git-graph-tasks の実行ラッパー。内容を表示し、確認してからコマンドを実行する。
+# 表示の文言は同じディレクトリの messages.sh (install.sh が lang/<言語>.sh をコピーする) から読む。
+# リポジトリから直接実行したときは ../lang/${ZGT_LANG:-en}.sh を読む。
 #
 # 汎用:
 #   zgt-run [--confirm | --danger] [--message TEXT] [--note TEXT]
@@ -23,6 +25,15 @@
 #   zgt-run abort                          同上を中止する
 set -u
 
+zgt_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$zgt_dir/messages.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$zgt_dir/messages.sh"
+else
+  # shellcheck source=/dev/null
+  . "$zgt_dir/../lang/${ZGT_LANG:-en}.sh" || exit 2
+fi
+
 mode=run
 message=""
 note=""
@@ -36,10 +47,20 @@ else
   B="" R="" G="" Y="" D="" N=""
 fi
 
+# msg <キー> [値...]: 言語ファイルの MSG_<キー> を書式にして値を差し込み、出力する (改行なし)
+msg() {
+  local _fmt="MSG_$1"
+  shift
+  # shellcheck disable=SC2059
+  printf -- "${!_fmt}" "$@"
+}
+
 usage_error() {
   printf 'zgt-run: %s\n' "$1" >&2
   exit 2
 }
+
+usage() { usage_error "$(msg USAGE "zgt-run $1")"; }
 
 # 何もせずに終わる。成功扱いにするとタスクのターミナルがすぐ閉じて理由が読めないので 1 で終える
 nothing_to_do() {
@@ -48,7 +69,7 @@ nothing_to_do() {
 }
 
 cancelled() {
-  printf '%sキャンセルしました。%s\n' "$D" "$N"
+  printf '%s%s%s\n' "$D" "$(msg CANCELLED)" "$N"
   exit 0
 }
 
@@ -91,26 +112,31 @@ count_args() { echo $#; }
 
 require_repo() {
   repo="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-    printf '%sGit リポジトリではありません: %s%s\n' "$R" "$PWD" "$N"
+    printf '%s%s%s\n' "$R" "$(msg NOT_REPO "$PWD")" "$N"
     exit 1
   }
 }
 
 require_commit() {
-  git_has "$1^{commit}" || nothing_to_do "コミットが見つかりません: $1"
+  git_has "$1^{commit}" || nothing_to_do "$(msg COMMIT_NOT_FOUND "$1")"
+}
+
+# show_field <ラベルのキー> <値>  (ラベルは言語ファイル側で桁を揃えて空白まで含めている)
+show_field() {
+  printf '%s%s%s%s\n' "$B" "$(msg "$1")" "$N" "$2"
 }
 
 show_context() {
-  printf '%sリポジトリ%s     %s\n' "$B" "$N" "$repo"
-  printf '%s現在のブランチ%s %s\n' "$B" "$N" "$(current_branch)"
-  [ -n "$target" ] && printf '%s対象%s           %s\n' "$B" "$N" "$target"
+  show_field LABEL_REPO "$repo"
+  show_field LABEL_BRANCH "$(current_branch)"
+  [ -n "$target" ] && show_field LABEL_TARGET "$target"
   return 0
 }
 
 show_command() {
   local cmdline
   cmdline="$(printf '%q ' "$@")"
-  printf '%sコマンド%s       %s\n' "$B" "$N" "${cmdline% }"
+  show_field LABEL_COMMAND "${cmdline% }"
 }
 
 show_message() {
@@ -130,12 +156,12 @@ ask() {
   local ans=""
   case "$1" in
     confirm)
-      printf '\n実行しますか? [y/N] '
+      printf '\n%s' "$(msg ASK_CONFIRM)"
       IFS= read -r ans || ans=""
       is_yes "$ans" || cancelled
       ;;
     danger)
-      printf '\n%s実行するには yes と入力してください:%s ' "$R" "$N"
+      printf '\n%s%s%s ' "$R" "$(msg ASK_DANGER)" "$N"
       IFS= read -r ans || ans=""
       [ "$ans" = "yes" ] || cancelled
       ;;
@@ -153,7 +179,7 @@ choose() {
     i=$((i + 1))
   done
   while :; do
-    printf '番号を選んでください (空 / q でキャンセル): '
+    msg CHOOSE_PROMPT
     IFS= read -r ans || ans=""
     case "$ans" in
       "" | q | Q) cancelled ;;
@@ -165,7 +191,7 @@ choose() {
         fi
         ;;
     esac
-    printf '%s1〜%d の番号を入力してください。%s\n' "$R" $# "$N"
+    printf '%s%s%s\n' "$R" "$(msg CHOOSE_INVALID $#)" "$N"
   done
 }
 
@@ -176,19 +202,19 @@ execute() {
   "$@"
   status=$?
   if [ "$status" -eq 0 ]; then
-    printf '\n%s✓ 完了%s\n' "$G" "$N"
+    printf '\n%s%s%s\n' "$G" "$(msg DONE)" "$N"
     if [ -n "$note" ]; then
       printf '%s\n' "$note"
       # 補足を読めるよう、閉じる前に待つ (成功時にターミナルを閉じるタスク向け)
-      printf '%s(Enter で閉じます)%s' "$D" "$N"
+      printf '%s%s%s' "$D" "$(msg PRESS_ENTER)" "$N"
       IFS= read -r _ || true
     fi
   else
-    printf '\n%s✗ 失敗しました (exit %d)%s\n' "$R" "$status" "$N"
+    printf '\n%s%s%s\n' "$R" "$(msg FAILED "$status")" "$N"
     op="$(current_op)"
     if [ -n "$op" ]; then
-      printf '%s が途中で止まっています。コンフリクトを解決してステージし、Custom Commands の「Continue」を実行してください (中止は「Abort」)。\n' "$op"
-      [ "$op" = merge ] && echo "マージは Git Panel からコミットしても完了できます。"
+      printf '%s\n' "$(msg STOPPED "$op")"
+      [ "$op" = merge ] && printf '%s\n' "$(msg MERGE_PANEL_HINT)"
     fi
   fi
   exit "$status"
@@ -198,7 +224,7 @@ execute() {
 resolve_target() {
   local sha="$1" ref="$2"
   if has_ref "$ref"; then
-    git_has "$ref^{commit}" || nothing_to_do "見つかりません: $ref"
+    git_has "$ref^{commit}" || nothing_to_do "$(msg REF_NOT_FOUND "$ref")"
     rev="$ref"
     disp="$ref"
     target="$ref ($(commit_summary "$ref"))"
@@ -217,7 +243,7 @@ run_generic() {
       --confirm) mode=confirm ;;
       --danger) mode=danger ;;
       --message | --note | --require)
-        [ $# -ge 2 ] || usage_error "$1 には値が必要です"
+        [ $# -ge 2 ] || usage_error "$(msg NEEDS_VALUE "$1")"
         case "$1" in
           --message) message="$2" ;;
           --note) note="$2" ;;
@@ -229,19 +255,19 @@ run_generic() {
         shift
         break
         ;;
-      *) usage_error "不明なオプション: $1" ;;
+      *) usage_error "$(msg UNKNOWN_OPTION "$1")" ;;
     esac
     shift
   done
-  [ $# -gt 0 ] || usage_error "実行するコマンドがありません"
+  [ $# -gt 0 ] || usage_error "$(msg NO_COMMAND)"
 
   require_repo
   case "$require" in
     "") ;;
     merge | rebase | cherry-pick | revert)
-      [ "$(current_op)" = "$require" ] || nothing_to_do "途中で止まっている $require はありません。"
+      [ "$(current_op)" = "$require" ] || nothing_to_do "$(msg NOT_IN_PROGRESS "$require")"
       ;;
-    *) usage_error "--require には merge / rebase / cherry-pick / revert のどれかを指定してください" ;;
+    *) usage_error "$(msg BAD_REQUIRE)" ;;
   esac
 
   show_context
@@ -252,7 +278,7 @@ run_generic() {
 }
 
 # ref (ローカルブランチ / リモートブランチ / タグ) をチェックアウトする方法を決める
-# plan_kind: branch / tag / current / missing   plan_desc: 説明   plan_cmd_*: コマンド
+# plan_kind: branch / tag / current / missing   plan_desc: 説明   plan_cmd / plan_args: コマンド
 plan_ref_checkout() {
   local ref="$1" head remote r local_name upstream
   head="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
@@ -260,10 +286,10 @@ plan_ref_checkout() {
   if git_has "refs/heads/$ref"; then
     if [ "$head" = "$ref" ]; then
       plan_kind=current
-      plan_desc="$ref は既にチェックアウトしています。"
+      plan_desc="$(msg ALREADY_CHECKED_OUT "$ref")"
       return
     fi
-    plan_desc="ブランチ $ref に切り替える"
+    plan_desc="$(msg SWITCH_TO_BRANCH "$ref")"
     plan_cmd="switch"
     plan_args="$ref"
   elif git_has "refs/remotes/$ref"; then
@@ -275,40 +301,40 @@ plan_ref_checkout() {
     done
     if [ -z "$remote" ]; then
       plan_kind=missing
-      plan_desc="リモート名を判別できません: $ref"
+      plan_desc="$(msg NO_REMOTE_FOR "$ref")"
       return
     fi
     local_name="${ref#"$remote"/}"
     if git_has "refs/heads/$local_name"; then
       if [ "$head" = "$local_name" ]; then
         plan_kind=current
-        plan_desc="$local_name は既にチェックアウトしています。"
+        plan_desc="$(msg ALREADY_CHECKED_OUT "$local_name")"
         return
       fi
       upstream="$(git rev-parse --abbrev-ref "$local_name@{upstream}" 2>/dev/null || true)"
       if [ "$upstream" = "$ref" ]; then
-        plan_desc="$ref を追跡しているローカルブランチ $local_name に切り替える"
+        plan_desc="$(msg SWITCH_TRACKING "$ref" "$local_name")"
       else
-        plan_desc="既にあるローカルブランチ $local_name に切り替える (追跡先: ${upstream:-なし})"
+        plan_desc="$(msg SWITCH_EXISTING "$local_name" "${upstream:-$(msg NONE)}")"
       fi
       plan_cmd="switch"
       plan_args="$local_name"
     else
-      plan_desc="$ref を追跡するローカルブランチ $local_name を作って切り替える"
+      plan_desc="$(msg CREATE_TRACKING "$ref" "$local_name")"
       plan_cmd="track"
       plan_args="$local_name"
     fi
   elif git_has "refs/tags/$ref"; then
     plan_kind=tag
-    plan_desc="タグ $ref を detached HEAD でチェックアウトします。"
+    plan_desc="$(msg TAG_DETACHED "$ref")"
   else
     plan_kind=missing
-    plan_desc="ブランチ / タグが見つかりません: $ref"
+    plan_desc="$(msg REF_MISSING "$ref")"
   fi
 }
 
 run_checkout() {
-  [ $# -eq 2 ] || usage_error "使い方: zgt-run checkout <sha> <ref|@>"
+  [ $# -eq 2 ] || usage "checkout <sha> <ref|@>"
   local sha="$1" ref="$2" short already=0
   require_repo
   require_commit "$sha"
@@ -333,9 +359,9 @@ run_checkout() {
         ;;
       branch)
         show_context
-        choose "チェックアウトの方法を選んでください:" \
+        choose "$(msg CHECKOUT_TITLE)" \
           "$plan_desc" \
-          "コミット $short を detached HEAD でチェックアウトする"
+          "$(msg CHECKOUT_DETACHED_OPT "$short")"
         if [ "$CHOICE" = 1 ]; then
           if [ "$plan_cmd" = track ]; then
             set -- git switch -c "$plan_args" --track "$ref"
@@ -343,7 +369,7 @@ run_checkout() {
             set -- git switch "$plan_args"
           fi
         else
-          [ "$already" = 1 ] && nothing_to_do "既にこのコミットをチェックアウトしています。"
+          [ "$already" = 1 ] && nothing_to_do "$(msg ALREADY_AT_COMMIT)"
           set -- git switch --detach "$sha"
         fi
         echo
@@ -353,8 +379,8 @@ run_checkout() {
     esac
   else
     target="$(commit_summary "$sha")"
-    [ "$already" = 1 ] && nothing_to_do "既にこのコミットをチェックアウトしています。"
-    message="このコミットを detached HEAD でチェックアウトします。ここで作業を続けるならブランチを作ってください。"
+    [ "$already" = 1 ] && nothing_to_do "$(msg ALREADY_AT_COMMIT)"
+    message="$(msg DETACHED_WARN)"
     set -- git switch --detach "$sha"
   fi
 
@@ -366,7 +392,7 @@ run_checkout() {
 }
 
 run_create_branch() {
-  [ $# -eq 1 ] || usage_error "使い方: zgt-run create-branch <sha>"
+  [ $# -eq 1 ] || usage "create-branch <sha>"
   local sha="$1" name ans
   require_repo
   require_commit "$sha"
@@ -374,24 +400,24 @@ run_create_branch() {
   show_context
 
   while :; do
-    printf '\n新しいブランチ名 (空でキャンセル): '
+    printf '\n%s' "$(msg NEW_BRANCH_PROMPT)"
     IFS= read -r name || name=""
     # 前後の空白を取り除く
     name="${name#"${name%%[![:space:]]*}"}"
     name="${name%"${name##*[![:space:]]}"}"
     [ -n "$name" ] || cancelled
     if ! git check-ref-format --branch "$name" >/dev/null 2>&1; then
-      printf '%sブランチ名として使えません: %s%s\n' "$R" "$name" "$N"
+      printf '%s%s%s\n' "$R" "$(msg BAD_BRANCH_NAME "$name")" "$N"
       continue
     fi
     if git_has "refs/heads/$name"; then
-      printf '%s既にあります: %s%s\n' "$R" "$name" "$N"
+      printf '%s%s%s\n' "$R" "$(msg BRANCH_EXISTS "$name")" "$N"
       continue
     fi
     break
   done
 
-  printf 'チェックアウトもしますか? [y/N] '
+  msg ASK_CHECKOUT_TOO
   IFS= read -r ans || ans=""
   if is_yes "$ans"; then
     set -- git switch -c "$name" "$sha"
@@ -404,21 +430,21 @@ run_create_branch() {
 }
 
 run_merge() {
-  [ $# -eq 2 ] || usage_error "使い方: zgt-run merge <sha> <ref|@>"
+  [ $# -eq 2 ] || usage "merge <sha> <ref|@>"
   require_repo
   resolve_target "$1" "$2"
-  [ "$rev" = "$(git symbolic-ref --short -q HEAD)" ] && nothing_to_do "現在のブランチ自身はマージできません。"
+  [ "$rev" = "$(git symbolic-ref --short -q HEAD)" ] && nothing_to_do "$(msg MERGE_SELF)"
   show_context
-  choose "$disp を現在のブランチにマージします。方法を選んでください:" \
-    "通常        git merge" \
-    "--no-ff     fast-forward できる場合もマージコミットを作る" \
-    "--squash    変更を 1 つにまとめてステージする (コミットはしない)"
+  choose "$(msg MERGE_TITLE "$disp")" \
+    "$(msg MERGE_OPT_NORMAL)" \
+    "$(msg MERGE_OPT_NOFF)" \
+    "$(msg MERGE_OPT_SQUASH)"
   case "$CHOICE" in
     1) set -- git merge --no-edit "$rev" ;;
     2) set -- git merge --no-ff --no-edit "$rev" ;;
     3)
       set -- git merge --squash "$rev"
-      note="変更はステージ済みです。Git Panel からコミットしてください。"
+      note="$(msg NOTE_STAGED)"
       ;;
   esac
   echo
@@ -427,13 +453,13 @@ run_merge() {
 }
 
 run_rebase() {
-  [ $# -eq 2 ] || usage_error "使い方: zgt-run rebase <sha> <ref|@>"
+  [ $# -eq 2 ] || usage "rebase <sha> <ref|@>"
   require_repo
   resolve_target "$1" "$2"
   show_context
-  choose "現在のブランチを $disp の上にリベースします。方法を選んでください:" \
-    "通常           git rebase" \
-    "interactive    git rebase -i (Git に設定したエディタでコミットを並べ替え・編集する)"
+  choose "$(msg REBASE_TITLE "$disp")" \
+    "$(msg REBASE_OPT_NORMAL)" \
+    "$(msg REBASE_OPT_INTERACTIVE)"
   case "$CHOICE" in
     1) set -- git rebase "$rev" ;;
     2) set -- git rebase -i "$rev" ;;
@@ -455,18 +481,18 @@ run_pick() {
   [ "$parents" -gt 2 ] && merge_commit=1
 
   case "$op" in
-    cherry-pick) message="このコミットの変更を現在のブランチに取り込みます。" ;;
-    revert) message="このコミットを打ち消すコミットを現在のブランチに作ります。" ;;
+    cherry-pick) message="$(msg PICK_DESC)" ;;
+    revert) message="$(msg REVERT_DESC)" ;;
   esac
-  [ "$merge_commit" = 1 ] && message="$message マージコミットなので、第 1 親を基準にします (-m 1)。"
+  [ "$merge_commit" = 1 ] && message="$message $(msg MERGE_COMMIT_NOTE)"
 
   if [ "$op" = cherry-pick ] && [ $# -eq 0 ]; then
     show_context
     show_message
-    choose "取り込み方を選んでください:" \
-      "通常          git cherry-pick" \
-      "-x            元のコミットをメッセージに記録する" \
-      "--no-commit   変更だけ取り込んでステージする (コミットはしない)"
+    choose "$(msg PICK_TITLE)" \
+      "$(msg PICK_OPT_NORMAL)" \
+      "$(msg PICK_OPT_X)" \
+      "$(msg PICK_OPT_NOCOMMIT)"
     case "$CHOICE" in
       2) set -- -x ;;
       3) set -- --no-commit ;;
@@ -482,7 +508,7 @@ run_pick() {
   set -- "$@" "$sha"
   for arg in "$@"; do
     case "$arg" in
-      -n | --no-commit) note="変更はステージ済みです。Git Panel からコミットしてください。" ;;
+      -n | --no-commit) note="$(msg NOTE_STAGED)" ;;
     esac
   done
 
@@ -504,38 +530,39 @@ branch_upstream() {
   up_remote="$(git config "branch.$1.remote" 2>/dev/null)" || return 0
   up_merge="$(git config "branch.$1.merge" 2>/dev/null)" || return 0
   if [ "$up_remote" = "." ]; then
-    printf '%s (ローカルブランチ)\n' "${up_merge#refs/heads/}"
+    printf '%s\n' "$(msg LOCAL_UPSTREAM "${up_merge#refs/heads/}")"
   else
     printf '%s/%s\n' "$up_remote" "${up_merge#refs/heads/}"
   fi
 }
 
 run_push() {
-  { [ $# -ge 1 ] && [ $# -le 2 ]; } || usage_error "使い方: zgt-run push <branch> [remote]"
+  { [ $# -ge 1 ] && [ $# -le 2 ]; } || usage "push <branch> [remote]"
   local branch="$1" remote="${2:-origin}" refspec counts upstream ans
   local set_upstream=""
   require_repo
-  git_has "refs/heads/$branch" || nothing_to_do "$branch はローカルブランチではないので push できません。"
-  git remote get-url "$remote" >/dev/null 2>&1 || nothing_to_do "リモート $remote がありません。"
+  git_has "refs/heads/$branch" || nothing_to_do "$(msg NOT_LOCAL_BRANCH "$branch")"
+  git remote get-url "$remote" >/dev/null 2>&1 || nothing_to_do "$(msg NO_SUCH_REMOTE "$remote")"
   if git_has "refs/remotes/$remote/$branch"; then
     counts="$(git rev-list --left-right --count "refs/heads/$branch...refs/remotes/$remote/$branch")"
-    target="$branch → $remote ($remote/$branch より ${counts%%[[:space:]]*} コミット先行 / ${counts##*[[:space:]]} コミット遅れ。最後の fetch 時点)"
+    target="$(msg PUSH_TARGET_DIFF "$branch" "$remote" "$remote/$branch" \
+      "${counts%%[[:space:]]*}" "${counts##*[[:space:]]}")"
   else
-    target="$branch → $remote ($remote にはまだありません)"
+    target="$(msg PUSH_TARGET_NEW "$branch" "$remote" "$remote")"
   fi
   refspec="refs/heads/$branch:refs/heads/$branch"
   upstream="$(branch_upstream "$branch")"
 
   show_context
-  printf '%supstream%s       %s\n' "$B" "$N" "${upstream:-なし}"
-  choose "push の方法を選んでください:" \
-    "通常                git push" \
-    "force-with-lease    上書きする。最後に fetch した後で他の人が push していれば中止する" \
-    "force               無条件に上書きする (他の人が push したコミットも消える)"
+  show_field LABEL_UPSTREAM "${upstream:-$(msg NONE)}"
+  choose "$(msg PUSH_TITLE)" \
+    "$(msg PUSH_OPT_NORMAL)" \
+    "$(msg PUSH_OPT_LEASE)" \
+    "$(msg PUSH_OPT_FORCE)"
 
   # 既に同じ upstream なら -u を付けても変わらないので聞かない
   if [ "$upstream" != "$remote/$branch" ]; then
-    printf 'upstream を %s に設定しますか? (現在: %s) [y/N] ' "$remote/$branch" "${upstream:-なし}"
+    msg ASK_UPSTREAM "$remote/$branch" "${upstream:-$(msg NONE)}"
     IFS= read -r ans || ans=""
     is_yes "$ans" && set_upstream="-u"
   fi
@@ -544,12 +571,12 @@ run_push() {
     1) set -- git push ;;
     2)
       mode=danger
-      message="$remote/$branch をローカルの $branch で上書きします。最後に fetch した後で他の人が push していた場合は中止されます。"
+      message="$(msg LEASE_WARN "$remote/$branch" "$branch")"
       set -- git push --force-with-lease --force-if-includes
       ;;
     3)
       mode=danger
-      message="$remote/$branch を無条件に上書きします。他の人が push したコミットも消えます。"
+      message="$(msg FORCE_WARN "$remote/$branch")"
       set -- git push --force
       ;;
   esac
@@ -563,20 +590,19 @@ run_push() {
 }
 
 run_continue() {
-  [ $# -eq 0 ] || usage_error "使い方: zgt-run continue"
+  [ $# -eq 0 ] || usage "continue"
   local op unmerged
   require_repo
   op="$(current_op)"
-  [ -n "$op" ] || nothing_to_do "途中で止まっている merge / rebase / cherry-pick / revert はありません。"
+  [ -n "$op" ] || nothing_to_do "$(msg NOTHING_IN_PROGRESS)"
   unmerged="$(git diff --name-only --diff-filter=U)"
   if [ -n "$unmerged" ]; then
-    printf '%s未解決のコンフリクトがあります。解決してステージしてから、もう一度実行してください:%s\n%s\n' \
-      "$R" "$N" "$unmerged"
+    printf '%s%s%s\n%s\n' "$R" "$(msg UNRESOLVED)" "$N" "$unmerged"
     exit 1
   fi
   # コミットメッセージのエディタを開かず、Git が用意したメッセージをそのまま使う
   export GIT_EDITOR=true
-  message="途中で止まっている $op を続行します (エディタは開かず、Git が用意したメッセージを使います)。"
+  message="$(msg CONTINUE_DESC "$op")"
   set -- git "$op" --continue
 
   show_context
@@ -586,12 +612,12 @@ run_continue() {
 }
 
 run_abort() {
-  [ $# -eq 0 ] || usage_error "使い方: zgt-run abort"
+  [ $# -eq 0 ] || usage "abort"
   local op
   require_repo
   op="$(current_op)"
-  [ -n "$op" ] || nothing_to_do "途中で止まっている merge / rebase / cherry-pick / revert はありません。"
-  message="途中で止まっている $op を中止し、始める前の状態に戻します (コンフリクトの解決内容は失われます)。"
+  [ -n "$op" ] || nothing_to_do "$(msg NOTHING_IN_PROGRESS)"
+  message="$(msg ABORT_DESC "$op")"
   set -- git "$op" --abort
 
   show_context
@@ -616,7 +642,7 @@ case "${1-}" in
     esac
     ;;
   cherry-pick | revert)
-    [ $# -ge 2 ] || usage_error "使い方: zgt-run $1 <sha> [options]"
+    [ $# -ge 2 ] || usage "$1 <sha> [options]"
     run_pick "$@"
     ;;
   *) run_generic "$@" ;;
