@@ -1,38 +1,9 @@
 [
   {
-    "label": "Merge ${ZED_GIT_REF} into current branch",
+    "label": "Merge into current branch…",
     "command": "__ZGT_RUN__",
-    "args": [
-      "--confirm",
-      "--message", "${ZED_GIT_REF} を現在のブランチにマージします。",
-      "--",
-      "git", "merge", "--no-edit", "${ZED_GIT_REF}"
-    ],
+    "args": ["merge", "${ZED_GIT_SHA}", "${ZED_GIT_REF:@}"],
     "hide": "on_success",
-    "tags": ["git-command"]
-  },
-  {
-    "label": "Merge ${ZED_GIT_REF} into current branch (--no-ff)",
-    "command": "__ZGT_RUN__",
-    "args": [
-      "--confirm",
-      "--message", "${ZED_GIT_REF} を現在のブランチにマージします (fast-forward できる場合もマージコミットを作ります)。",
-      "--",
-      "git", "merge", "--no-ff", "--no-edit", "${ZED_GIT_REF}"
-    ],
-    "hide": "on_success",
-    "tags": ["git-command"]
-  },
-  {
-    "label": "Merge ${ZED_GIT_REF} into current branch (--squash)",
-    "command": "__ZGT_RUN__",
-    "args": [
-      "--confirm",
-      "--message", "${ZED_GIT_REF} の変更を 1 つにまとめて現在のブランチに取り込みます (コミットはしません)。",
-      "--note", "変更はステージ済みです。Git Panel からコミットしてください。",
-      "--",
-      "git", "merge", "--squash", "${ZED_GIT_REF}"
-    ],
     "tags": ["git-command"]
   }
 ]

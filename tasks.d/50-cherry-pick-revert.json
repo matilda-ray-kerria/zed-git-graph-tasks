@@ -1,22 +1,9 @@
 [
   {
-    "label": "Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch",
+    "label": "Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch…",
     "command": "__ZGT_RUN__",
     "args": ["cherry-pick", "${ZED_GIT_SHA}"],
     "hide": "on_success",
-    "tags": ["git-command"]
-  },
-  {
-    "label": "Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch (-x)",
-    "command": "__ZGT_RUN__",
-    "args": ["cherry-pick", "${ZED_GIT_SHA}", "-x"],
-    "hide": "on_success",
-    "tags": ["git-command"]
-  },
-  {
-    "label": "Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch (--no-commit)",
-    "command": "__ZGT_RUN__",
-    "args": ["cherry-pick", "${ZED_GIT_SHA}", "--no-commit"],
     "tags": ["git-command"]
   },
   {

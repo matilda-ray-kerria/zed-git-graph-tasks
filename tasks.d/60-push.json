@@ -1,35 +1,8 @@
 [
   {
-    "label": "Push ${ZED_GIT_REF} → origin",
+    "label": "Push ${ZED_GIT_REF} → origin…",
     "command": "__ZGT_RUN__",
-    "args": [
-      "--confirm",
-      "--message", "ローカルブランチ ${ZED_GIT_REF} を origin に push します (upstream も設定します)。",
-      "--",
-      "git", "push", "-u", "origin", "refs/heads/${ZED_GIT_REF}:refs/heads/${ZED_GIT_REF}"
-    ],
-    "tags": ["git-command"]
-  },
-  {
-    "label": "Push ${ZED_GIT_REF} → origin (force-with-lease)",
-    "command": "__ZGT_RUN__",
-    "args": [
-      "--danger",
-      "--message", "origin/${ZED_GIT_REF} をローカルの ${ZED_GIT_REF} で上書きします。最後に fetch した後で他の人が push していた場合は中止されます。",
-      "--",
-      "git", "push", "--force-with-lease", "--force-if-includes", "origin", "refs/heads/${ZED_GIT_REF}:refs/heads/${ZED_GIT_REF}"
-    ],
-    "tags": ["git-command"]
-  },
-  {
-    "label": "Push ${ZED_GIT_REF} → origin (force)",
-    "command": "__ZGT_RUN__",
-    "args": [
-      "--danger",
-      "--message", "origin/${ZED_GIT_REF} を無条件に上書きします。他の人が push したコミットも消えます。",
-      "--",
-      "git", "push", "--force", "origin", "refs/heads/${ZED_GIT_REF}:refs/heads/${ZED_GIT_REF}"
-    ],
+    "args": ["push", "${ZED_GIT_REF}", "origin"],
     "tags": ["git-command"]
   }
 ]

@@ -38,17 +38,26 @@ count_tasks() { zgt_jsonc_to_json "$TASKS" | jq 'length'; }
 count_ours() { zgt_jsonc_to_json "$TASKS" | jq --arg r "$RUNNER" '[.[] | select(.command == $r)] | length'; }
 
 # Zed の代わりに tasks.json のタスクを実行する。REF / SHA に右クリックした ref / コミットを入れておく。
+# REF が空ならコミット行から開いた扱い (Zed と同じく ${ZED_GIT_REF} を使うタスクは出ない、
+# ${ZED_GIT_REF:既定値} は既定値になる)
 #   run_task <ラベル(テンプレート)> <標準入力に渡す内容>
 REF=""
 SHA=""
 run_task() {
   local label="$1" input="$2" line
   local -a cmd=() envs=()
+  if [ -z "$REF" ] && zgt_jsonc_to_json "$TASKS" |
+    jq -e --arg l "$label" '.[] | select(.label == $l) | tostring | contains("${ZED_GIT_REF}")' >/dev/null; then
+    echo "コミット行のメニューには出ないタスク: $label" >&2
+    return 98
+  fi
   while IFS= read -r line; do cmd+=("$line"); done < <(
     zgt_jsonc_to_json "$TASKS" | jq -r --arg l "$label" --arg ref "$REF" --arg sha "$SHA" \
       --arg short "${SHA:0:7}" '
       .[] | select(.label == $l) | ([.command] + .args)[]
-      | gsub("\\$\\{ZED_GIT_REF\\}"; $ref) | gsub("\\$\\{ZED_GIT_SHA\\}"; $sha)
+      | gsub("\\$\\{ZED_GIT_REF\\}"; $ref)
+      | gsub("\\$\\{ZED_GIT_REF:(?<d>[^}]*)\\}"; if $ref == "" then .d else $ref end)
+      | gsub("\\$\\{ZED_GIT_SHA\\}"; $sha)
       | gsub("\\$\\{ZED_GIT_SHA_SHORT\\}"; $short)')
   while IFS= read -r line; do envs+=("$line"); done < <(
     zgt_jsonc_to_json "$TASKS" | jq -r --arg l "$label" '
@@ -61,6 +70,7 @@ run_task() {
 }
 cur() { git symbolic-ref --short -q HEAD || echo DETACHED; }
 subject() { git log -1 --format=%s "${1:-HEAD}"; }
+count_parents() { git rev-list --parents -n 1 "${1:-HEAD}" | awk '{ print NF - 1 }'; }
 commit_file() { # commit_file <ファイル> <内容> <メッセージ>
   printf '%s\n' "$2" >"$1" && git add "$1" && git commit -q -m "$3"
 }
@@ -74,7 +84,7 @@ check "変数は \${...} 形式だけを使う (日本語が変数名に含ま�
   test -z "$(grep -n '\$ZED_' "$ROOT"/tasks.d/*.json)"
 # Zed は未定義の ZED_ 変数を含むタスクをメニューに出さない (コミット行には ZED_GIT_REF が無い)
 commit_menu="$("$ROOT/build.sh" | jq '[.[] | select(tostring | contains("${ZED_GIT_REF}") | not)] | length')"
-check "コミット行のメニューに出るのは 8 個 (全 $total 個)" test "$commit_menu" = 8
+check "コミット行のメニューに出るのは push 以外の 8 個 (全 $total 個)" test "$commit_menu" = 8 -a "$total" = 9
 
 echo "== 新規インストール (tasks.json なし)"
 "$ROOT/install.sh" >/dev/null
@@ -152,27 +162,47 @@ git remote set-head origin main
 git switch -q -c feature
 commit_file f.txt feature feature
 git switch -q main
+base="$(git rev-parse main)"
+
+CHECKOUT='Checkout…'
+CREATE='Create branch at ${ZED_GIT_SHA_SHORT}…'
+MERGE='Merge into current branch…'
+REBASE='Rebase current branch onto this…'
+PICK='Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch…'
+REVERT='Revert ${ZED_GIT_SHA_SHORT}'
+PUSH='Push ${ZED_GIT_REF} → origin…'
+CONTINUE='Continue (merge / rebase / cherry-pick / revert)'
+ABORT='Abort (merge / rebase / cherry-pick / revert)'
+
+echo "== 番号の選択"
+REF=feature SHA="$(git rev-parse feature)"
+out="$(run_task "$MERGE" $'x\n9' 2>&1)"
+check "番号以外・範囲外は聞き直す" grep -q '1〜3 の番号を入力してください' <<<"$out"
+check "選ばないまま入力が終われば何もしない" test "$(git rev-parse HEAD)" = "$base"
+run_task "$MERGE" q >/dev/null
+check "q でキャンセル" test "$(git rev-parse HEAD)" = "$base"
+run_task "$MERGE" "" >/dev/null
+check "空入力でキャンセルし、成功扱い (exit 0)" test $? -eq 0 -a "$(git rev-parse HEAD)" = "$base"
 
 echo "== push"
-PUSH='Push ${ZED_GIT_REF} → origin'
-LEASE='Push ${ZED_GIT_REF} → origin (force-with-lease)'
-FORCE='Push ${ZED_GIT_REF} → origin (force)'
 REF=feature
-run_task "$PUSH" n >/dev/null
-check "n ならキャンセル" test -z "$(git ls-remote origin refs/heads/feature)"
-run_task "$PUSH" "" </dev/null >/dev/null
+out="$(REF="" run_task "$PUSH" 1 2>&1)"
+check "コミット行のメニューには出ない" test $? -eq 98
+run_task "$PUSH" "" >/dev/null
 check "空入力ならキャンセル" test -z "$(git ls-remote origin refs/heads/feature)"
-run_task "$PUSH" y >/dev/null 2>&1
-check "y でチェックアウトしていないブランチを push できる" test -n "$(git ls-remote origin refs/heads/feature)"
+out="$(run_task "$PUSH" 1 2>&1)"
+check "1 でチェックアウトしていないブランチを push できる" test -n "$(git ls-remote origin refs/heads/feature)"
 check "upstream が設定される" test "$(git config branch.feature.merge)" = refs/heads/feature
-REF=origin/main run_task "$PUSH" y >/dev/null 2>&1
-check "リモートブランチのラベルではエラーで止まる" test -z "$(git ls-remote origin refs/heads/origin/main)"
+check "リモートにまだ無いことを表示する" grep -q 'origin にはまだありません' <<<"$out"
+out="$(REF=origin/main run_task "$PUSH" 1 2>&1)"
+check "リモートブランチのラベルでは push しない" grep -q 'ローカルブランチではない' <<<"$out"
 
 git switch -q feature && git commit -q --amend -m "feature (amended)" && git switch -q main
-run_task "$LEASE" y >/dev/null 2>&1
+out="$(run_task "$PUSH" $'2\ny' 2>&1)"
 check "force-with-lease: y では実行しない (yes が必要)" \
   test "$(git ls-remote origin refs/heads/feature | cut -f1)" != "$(git rev-parse feature)"
-run_task "$LEASE" yes >/dev/null 2>&1
+check "先行 / 遅れのコミット数を表示する" grep -q '1 コミット先行 / 1 コミット遅れ' <<<"$out"
+run_task "$PUSH" $'2\nyes' >/dev/null 2>&1
 check "force-with-lease: yes で上書きできる" \
   test "$(git ls-remote origin refs/heads/feature | cut -f1)" = "$(git rev-parse feature)"
 
@@ -181,47 +211,54 @@ git clone -q "$WORK/remote.git" "$WORK/other" 2>/dev/null
   git push -q origin feature 2>/dev/null)
 git switch -q feature && git commit -q --amend -m "feature (amended again)" && git switch -q main
 git fetch -q origin
-run_task "$LEASE" yes >/dev/null 2>&1
+run_task "$PUSH" $'2\nyes' >/dev/null 2>&1
 check "force-with-lease: 他人の push を fetch しただけで取り込んでいなければ拒否される" \
   test "$(git ls-remote origin refs/heads/feature | cut -f1)" != "$(git rev-parse feature)"
-run_task "$FORCE" yes >/dev/null 2>&1
+run_task "$PUSH" $'3\nyes' >/dev/null 2>&1
 check "force: yes で無条件に上書きできる" \
   test "$(git ls-remote origin refs/heads/feature | cut -f1)" = "$(git rev-parse feature)"
 
 echo "== checkout"
-CHECKOUT='Checkout ${ZED_GIT_REF}'
-DETACH='Checkout ${ZED_GIT_SHA_SHORT} (detached HEAD)'
-REF=feature
-run_task "$CHECKOUT" n >/dev/null
-check "n ならキャンセル" test "$(cur)" = main
-run_task "$CHECKOUT" y >/dev/null 2>&1
-check "y でローカルブランチに切り替わる" test "$(cur)" = feature
-out="$(run_task "$CHECKOUT" y 2>&1)"
+REF=feature SHA="$(git rev-parse feature)"
+run_task "$CHECKOUT" "" >/dev/null
+check "空入力ならキャンセル" test "$(cur)" = main
+out="$(run_task "$CHECKOUT" 1 2>&1)"
+check "ブランチラベルからはブランチか detached HEAD かを選ぶ" grep -q 'detached HEAD でチェックアウトする' <<<"$out"
+check "1 でブランチに切り替わる" test "$(cur)" = feature
+out="$(run_task "$CHECKOUT" 1 2>&1)"
 check "チェックアウト中のブランチなら何もしない" grep -q '既にチェックアウトしています' <<<"$out"
+git switch -q main
+run_task "$CHECKOUT" 2 >/dev/null 2>&1
+check "2 でそのコミットを detached HEAD でチェックアウトする" \
+  test "$(cur)" = DETACHED -a "$(git rev-parse HEAD)" = "$SHA"
+git switch -q main
 (cd "$WORK/other" && git switch -q -c remote-only && commit_file r.txt r remote-only &&
   git push -q origin remote-only 2>/dev/null)
 git fetch -q origin
-REF=origin/remote-only run_task "$CHECKOUT" y >/dev/null 2>&1
+REF=origin/remote-only SHA="$(git rev-parse origin/remote-only)" run_task "$CHECKOUT" 1 >/dev/null 2>&1
 check "リモートブランチなら追跡するローカルブランチを作って切り替える" test "$(cur)" = remote-only
 check "作ったブランチの upstream が origin/remote-only" \
   test "$(git rev-parse --abbrev-ref 'remote-only@{upstream}')" = origin/remote-only
-REF=origin/HEAD run_task "$CHECKOUT" y >/dev/null 2>&1
+REF=origin/HEAD SHA="$base" run_task "$CHECKOUT" 1 >/dev/null 2>&1
 check "origin/HEAD は指している先 (main) に切り替える" test "$(cur)" = main
-git tag v1 "$(git rev-parse main)"
-REF=v1 run_task "$CHECKOUT" y >/dev/null 2>&1
+git tag v1 "$base"
+REF=v1 SHA="$base" run_task "$CHECKOUT" n >/dev/null
+check "タグは y/N で確認する (n でキャンセル)" test "$(cur)" = main
+REF=v1 SHA="$base" run_task "$CHECKOUT" y >/dev/null 2>&1
 check "タグは detached HEAD でチェックアウトする" test "$(cur)" = DETACHED
 git switch -q main
-SHA="$(git rev-parse feature)"
-run_task "$DETACH" y >/dev/null 2>&1
+REF="" SHA="$(git rev-parse feature)"
+run_task "$CHECKOUT" n >/dev/null
+check "コミット行からは y/N で確認する (n でキャンセル)" test "$(cur)" = main
+run_task "$CHECKOUT" y >/dev/null 2>&1
 check "コミット行からは detached HEAD でチェックアウトする" \
   test "$(cur)" = DETACHED -a "$(git rev-parse HEAD)" = "$SHA"
-out="$(run_task "$DETACH" y 2>&1)"
+out="$(run_task "$CHECKOUT" y 2>&1)"
 check "既にそのコミットなら何もしない" grep -q '既にこのコミット' <<<"$out"
 git switch -q main
 
 echo "== create branch"
-CREATE='Create branch at ${ZED_GIT_SHA_SHORT}…'
-SHA="$(git rev-parse feature)"
+REF="" SHA="$(git rev-parse feature)"
 run_task "$CREATE" $'new-a\nn' >/dev/null 2>&1
 check "名前を入力し、n ならチェックアウトせずに作る" \
   test "$(git rev-parse -q --verify new-a)" = "$SHA" -a "$(cur)" = main
@@ -234,33 +271,75 @@ git switch -q main
 run_task "$CREATE" "" >/dev/null 2>&1
 check "空入力ならキャンセルして成功扱い (exit 0)" test $? -eq 0
 
-echo "== cherry-pick / revert"
-PICK='Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch'
-PICK_X='Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch (-x)'
-PICK_N='Cherry-pick ${ZED_GIT_SHA_SHORT} onto current branch (--no-commit)'
-REVERT='Revert ${ZED_GIT_SHA_SHORT}'
-git switch -q -c pick-src && commit_file p.txt p p1 && git switch -q main
-base="$(git rev-parse main)"
-SHA="$(git rev-parse pick-src)"
-run_task "$PICK" n >/dev/null
-check "cherry-pick: n ならキャンセル" test "$(git rev-parse HEAD)" = "$base"
-run_task "$PICK" y >/dev/null 2>&1
-check "cherry-pick: y で取り込める" test "$(subject)" = p1 -a -f p.txt
+echo "== merge"
+REF=feature SHA="$(git rev-parse feature)"
+run_task "$MERGE" 1 >/dev/null 2>&1
+check "ブランチラベルから: 1 で通常のマージ" git merge-base --is-ancestor feature HEAD
 git reset -q --hard "$base"
-run_task "$PICK_X" y >/dev/null 2>&1
-check "cherry-pick -x: 元のコミットが記録される" \
+run_task "$MERGE" 2 >/dev/null 2>&1
+check "ブランチラベルから: 2 で --no-ff (マージコミットを作る)" \
+  test "$(subject)" = "Merge branch 'feature'" -a "$(count_parents)" = 2
+git reset -q --hard "$base"
+out="$(run_task "$MERGE" 3 2>&1)"
+check "ブランチラベルから: 3 で --squash (コミットせずにステージ)" \
+  test "$(git rev-parse HEAD)" = "$base" -a "$(git diff --cached --name-only)" = f.txt
+check "--squash ではコミットするよう案内する" grep -q 'Git Panel からコミット' <<<"$out"
+git reset -q --hard "$base"
+REF=""
+run_task "$MERGE" 2 >/dev/null 2>&1
+check "コミット行から: コミットをマージできる" \
+  grep -q "^Merge commit '$SHA'" <<<"$(subject)"
+git reset -q --hard "$base"
+out="$(REF=main SHA="$base" run_task "$MERGE" 1 2>&1)"
+check "現在のブランチ自身はマージしない" grep -q '現在のブランチ自身はマージできません' <<<"$out"
+
+echo "== rebase"
+git switch -q -c topic "$base" && commit_file t.txt t t1
+t1="$(git rev-parse topic)"
+git switch -q main && commit_file m.txt m m1
+m1="$(git rev-parse main)"
+git switch -q topic
+REF="" SHA="$m1"
+run_task "$REBASE" "" >/dev/null
+check "空入力ならキャンセル" test "$(git rev-parse topic)" = "$t1"
+run_task "$REBASE" 1 >/dev/null 2>&1
+check "コミット行から: そのコミットの上にリベースできる" git merge-base --is-ancestor "$m1" topic
+git reset -q --hard "$t1"
+REF=main run_task "$REBASE" 1 >/dev/null 2>&1
+check "ブランチラベルから: そのブランチの上にリベースできる" git merge-base --is-ancestor main topic
+git reset -q --hard "$t1"
+export GIT_SEQUENCE_EDITOR=true
+out="$(REF=main run_task "$REBASE" 2 2>&1)"
+unset GIT_SEQUENCE_EDITOR
+check "2 で interactive (git rebase -i)" grep -q 'git rebase -i main' <<<"$out"
+check "interactive でもリベースできる" git merge-base --is-ancestor main topic
+git switch -q main && git reset -q --hard "$base"
+
+echo "== cherry-pick / revert"
+git switch -q -c pick-src "$base" && commit_file p.txt p p1 && git switch -q main
+REF="" SHA="$(git rev-parse pick-src)"
+run_task "$PICK" "" >/dev/null
+check "cherry-pick: 空入力ならキャンセル" test "$(git rev-parse HEAD)" = "$base"
+run_task "$PICK" 1 >/dev/null 2>&1
+check "cherry-pick: 1 で取り込める" test "$(subject)" = p1 -a -f p.txt
+git reset -q --hard "$base"
+run_task "$PICK" 2 >/dev/null 2>&1
+check "cherry-pick: 2 (-x) で元のコミットが記録される" \
   grep -q "cherry picked from commit $SHA" <<<"$(git log -1 --format=%B)"
 git reset -q --hard "$base"
-out="$(run_task "$PICK_N" y 2>&1)"
-check "cherry-pick --no-commit: コミットせずにステージだけする" \
+out="$(run_task "$PICK" 3 2>&1)"
+check "cherry-pick: 3 (--no-commit) でコミットせずにステージだけする" \
   test "$(git rev-parse HEAD)" = "$base" -a "$(git diff --cached --name-only)" = p.txt
 check "cherry-pick --no-commit: コミットするよう案内する" grep -q 'Git Panel からコミット' <<<"$out"
 git reset -q --hard "$base"
+REF=pick-src run_task "$PICK" 1 >/dev/null 2>&1
+check "cherry-pick: ブランチラベルからも使える" test "$(subject)" = p1
+git reset -q --hard "$base"
 
-git switch -q -c side && commit_file s.txt s s1 && git switch -q -c merged "$base" &&
+git switch -q -c side "$base" && commit_file s.txt s s1 && git switch -q -c merged "$base" &&
   git merge -q --no-ff --no-edit side && git switch -q main
-SHA="$(git rev-parse merged)"
-out="$(run_task "$PICK" y 2>&1)"
+REF="" SHA="$(git rev-parse merged)"
+out="$(run_task "$PICK" 1 2>&1)"
 check "cherry-pick: マージコミットは -m 1 で取り込める" test -f s.txt
 check "cherry-pick: マージコミットであることを表示する" grep -q 'マージコミット' <<<"$out"
 git reset -q --hard "$base"
@@ -270,8 +349,7 @@ SHA="$(git rev-parse HEAD)"
 run_task "$REVERT" n >/dev/null
 check "revert: n ならキャンセル" test "$(git rev-parse HEAD)" = "$SHA"
 run_task "$REVERT" y >/dev/null 2>&1
-check "revert: y で打ち消しコミットを作る (エディタを開かない)" \
-  test "$(subject)" = 'Revert "r1"' -a ! -e r.txt
+check "revert: y で打ち消しコミットを作る" test "$(subject)" = 'Revert "r1"' -a ! -e r.txt
 git reset -q --hard "$base"
 git merge -q --no-ff --no-edit side
 SHA="$(git rev-parse HEAD)"
@@ -280,18 +358,15 @@ check "revert: マージコミットは -m 1 で打ち消せる" test ! -e s.txt
 git reset -q --hard "$base"
 
 echo "== continue / abort"
-MERGE='Merge ${ZED_GIT_REF} into current branch'
-REBASE='Rebase current branch on ${ZED_GIT_REF}'
-CONTINUE='Continue (merge / rebase / cherry-pick / revert)'
-ABORT='Abort (merge / rebase / cherry-pick / revert)'
+REF="" SHA="$base"
 out="$(run_task "$CONTINUE" "" 2>&1)"
 check "Continue: 途中の操作が無ければ何もしない" grep -q 'はありません' <<<"$out"
 out="$(run_task "$ABORT" y 2>&1)"
 check "Abort: 途中の操作が無ければ何もしない" grep -q 'はありません' <<<"$out"
 
-git switch -q -c conflict-a && commit_file c.txt a a && git switch -q main && commit_file c.txt b b
-REF=conflict-a
-out="$(run_task "$MERGE" y 2>&1)"
+git switch -q -c conflict-a "$base" && commit_file c.txt a a && git switch -q main && commit_file c.txt b b
+REF=conflict-a SHA="$(git rev-parse conflict-a)"
+out="$(run_task "$MERGE" 1 2>&1)"
 check "merge: コンフリクト時に Continue / Abort を案内する" grep -q '「Continue」' <<<"$out"
 out="$(run_task "$CONTINUE" "" 2>&1)"
 check "Continue: 未解決のコンフリクトがあれば止める" grep -q '未解決のコンフリクト' <<<"$out"
@@ -300,17 +375,17 @@ check "Continue: 止めたときは成功扱いにしない" test "$(run_task "$
 echo resolved >c.txt && git add c.txt
 run_task "$CONTINUE" "" >/dev/null 2>&1
 check "Continue: merge を完了できる (エディタを開かない)" \
-  test -z "$(git rev-parse -q --verify MERGE_HEAD)" -a "$(git rev-list --parents -n1 HEAD | wc -w | tr -d ' ')" = 3
+  test -z "$(git rev-parse -q --verify MERGE_HEAD)" -a "$(count_parents)" = 2
 git reset -q --hard HEAD~1
 
-run_task "$MERGE" y >/dev/null 2>&1
+run_task "$MERGE" 1 >/dev/null 2>&1
 run_task "$ABORT" n >/dev/null
 check "Abort: n ならキャンセル" git rev-parse -q --verify MERGE_HEAD
 run_task "$ABORT" y >/dev/null 2>&1
 check "Abort: merge を中止できる" test -z "$(git rev-parse -q --verify MERGE_HEAD)"
 
-SHA="$(git rev-parse conflict-a)"
-run_task "$PICK" y >/dev/null 2>&1
+REF=""
+run_task "$PICK" 1 >/dev/null 2>&1
 check "cherry-pick: コンフリクトで止まる" git rev-parse -q --verify CHERRY_PICK_HEAD
 run_task "$ABORT" y >/dev/null 2>&1
 check "Abort: cherry-pick を中止できる" \
@@ -325,7 +400,8 @@ run_task "$CONTINUE" "" >/dev/null 2>&1
 check "Continue: revert を完了できる" \
   test -z "$(git rev-parse -q --verify REVERT_HEAD)" -a "$(subject)" = 'Revert "c"'
 
-out="$(run_task "$REBASE" y 2>&1)"
+REF=conflict-a SHA="$(git rev-parse conflict-a)"
+out="$(run_task "$REBASE" 1 2>&1)"
 check "rebase: コンフリクト時に案内が出る" grep -q '「Continue」' <<<"$out"
 echo resolved >c.txt && git add c.txt
 out="$(run_task "$CONTINUE" "" 2>&1)"
