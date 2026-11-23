@@ -1,0 +1,26 @@
+[
+  {
+    "label": "Rebase current branch on ${ZED_GIT_REF}",
+    "command": "__ZGT_RUN__",
+    "args": [
+      "--confirm",
+      "--message", "現在のブランチを ${ZED_GIT_REF} の上にリベースします。",
+      "--",
+      "git", "rebase", "${ZED_GIT_REF}"
+    ],
+    "hide": "on_success",
+    "tags": ["git-command"]
+  },
+  {
+    "label": "Rebase current branch on ${ZED_GIT_REF} (interactive)",
+    "command": "__ZGT_RUN__",
+    "args": [
+      "--confirm",
+      "--message", "現在のブランチを ${ZED_GIT_REF} の上に対話的にリベースします (Git に設定したエディタが開きます)。",
+      "--",
+      "git", "rebase", "-i", "${ZED_GIT_REF}"
+    ],
+    "hide": "on_success",
+    "tags": ["git-command"]
+  }
+]

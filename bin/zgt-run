@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# zed-git-graph-tasks の実行ラッパー。内容を表示し、必要なら確認してからコマンドを実行する。
+#
+#   zgt-run [--confirm | --danger] [--message TEXT] [--note TEXT]
+#           [--require merge|rebase] -- <command> [args...]
+#
+#   --confirm   y/N で確認する
+#   --danger    "yes" と入力しないと実行しない
+#   --message   確認の前に表示する説明
+#   --note      成功したときに表示する補足
+#   --require   進行中のマージ / リベースが無ければ何もしない
+set -u
+
+mode=run
+message=""
+note=""
+require=""
+
+usage_error() {
+  printf 'zgt-run: %s\n' "$1" >&2
+  exit 2
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --confirm) mode=confirm ;;
+    --danger) mode=danger ;;
+    --message | --note | --require)
+      [ $# -ge 2 ] || usage_error "$1 には値が必要です"
+      case "$1" in
+        --message) message="$2" ;;
+        --note) note="$2" ;;
+        --require) require="$2" ;;
+      esac
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *) usage_error "不明なオプション: $1" ;;
+  esac
+  shift
+done
+[ $# -gt 0 ] || usage_error "実行するコマンドがありません"
+
+if [ -t 1 ]; then
+  B=$'\033[1m' R=$'\033[31m' G=$'\033[32m' Y=$'\033[33m' D=$'\033[2m' N=$'\033[0m'
+else
+  B="" R="" G="" Y="" D="" N=""
+fi
+
+in_merge() { git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; }
+in_rebase() {
+  local d
+  for d in rebase-merge rebase-apply; do
+    [ -d "$(git rev-parse --git-path "$d" 2>/dev/null)" ] && return 0
+  done
+  return 1
+}
+
+repo="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  printf '%sGit リポジトリではありません: %s%s\n' "$R" "$PWD" "$N"
+  exit 1
+}
+
+case "$require" in
+  "") ;;
+  merge) in_merge || {
+    echo "進行中のマージはありません。"
+    exit 1
+  } ;;
+  rebase) in_rebase || {
+    echo "進行中のリベースはありません。"
+    exit 1
+  } ;;
+  *) usage_error "--require には merge か rebase を指定してください" ;;
+esac
+
+branch="$(git symbolic-ref --short -q HEAD 2>/dev/null)" ||
+  branch="(detached HEAD $(git rev-parse --short HEAD 2>/dev/null))"
+cmdline="$(printf '%q ' "$@")"
+
+printf '%sリポジトリ%s     %s\n' "$B" "$N" "$repo"
+printf '%s現在のブランチ%s %s\n' "$B" "$N" "$branch"
+printf '%sコマンド%s       %s\n' "$B" "$N" "${cmdline% }"
+[ -n "$message" ] && printf '\n%s%s%s\n' "$Y" "$message" "$N"
+
+ans=""
+case "$mode" in
+  confirm)
+    printf '\n実行しますか? [y/N] '
+    IFS= read -r ans || ans=""
+    case "$ans" in
+      y | Y | yes | Yes | YES) ;;
+      *)
+        printf '%sキャンセルしました。%s\n' "$D" "$N"
+        exit 0
+        ;;
+    esac
+    ;;
+  danger)
+    printf '\n%s実行するには yes と入力してください:%s ' "$R" "$N"
+    IFS= read -r ans || ans=""
+    if [ "$ans" != "yes" ]; then
+      printf '%sキャンセルしました。%s\n' "$D" "$N"
+      exit 0
+    fi
+    ;;
+esac
+
+echo
+"$@"
+status=$?
+
+if [ "$status" -eq 0 ]; then
+  printf '\n%s✓ 完了%s\n' "$G" "$N"
+  [ -n "$note" ] && printf '%s\n' "$note"
+else
+  printf '\n%s✗ 失敗しました (exit %d)%s\n' "$R" "$status" "$N"
+  if in_rebase; then
+    echo "リベースが途中で止まっています。コンフリクトを解決してステージし、Custom Commands の「Rebase: continue」を実行してください (中止は「Rebase: abort」)。"
+  elif in_merge; then
+    echo "マージが途中で止まっています。コンフリクトを解決してステージし、Git Panel からコミットしてください (中止は「Merge: abort」)。"
+  fi
+fi
+exit "$status"
