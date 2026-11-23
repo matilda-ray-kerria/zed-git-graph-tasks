@@ -24,6 +24,7 @@ Zed のグローバル `tasks.json` に差し込むインストーラ付き。
 - 番号を選ぶことを実行の確認とみなす。空のまま Enter か `q` でキャンセルする。force-with-lease / force を選んだときだけ、さらに `yes` の入力を求める
 - 実行するとタスクのターミナルに、リポジトリ・現在のブランチ・対象・コマンドを表示する。コンフリクトで止まったときは次にやることを表示する
 - push は、リモートが複数あれば最初に push 先を選ぶ。選択肢には各リモートの URL を表示し、Git の既定の push 先（`branch.<ブランチ>.pushRemote` → `remote.pushDefault` → `branch.<ブランチ>.remote` → `origin` の順に決まる）を 1 番目に置いて「(既定)」と付ける。残りは名前順。Enter だけならキャンセル
+- [fzf](https://github.com/junegunn/fzf) が入っていれば、push 先のリモートは fzf で名前や URL を入力して絞り込んで選ぶ。Enter でカーソルのある行を選び（最初は既定のリモート）、Esc / Ctrl-C か、該当なしのままの Enter でキャンセルする。fzf が無いか使えないときは番号で選ぶ。方法の選択（通常 / force など）は常に番号で選ぶ
 - push は、選んだリモートとの差（何コミット先行 / 遅れか）と現在の upstream も表示する。方法を選んだ後、「upstream を <リモート>/<ブランチ> に設定しますか? [y/N]」と聞く（y なら `-u` を付ける）。すでに同じ upstream が設定されていれば、付けても変わらないので聞かない。ローカルブランチ以外のラベルでは実行しない。チェックアウトしていないブランチも push できる。push 先のブランチ名はローカルと同じ
 - cherry-pick / revert でマージコミットを選んだ場合は、第 1 親を基準にする（`-m 1`）
 - `--squash` / `--no-commit` の後は、Git Panel からコミットするよう案内を出す。読めるよう、Enter を押すまで閉じない
@@ -35,6 +36,7 @@ Zed のグローバル `tasks.json` に差し込むインストーラ付き。
 - bash, awk, sed, diff（macOS / Linux に標準で入っている）
 - jq（`jq --version` で確認。無ければ `brew install jq` や `apt install jq` で入れる）
 - Git 2.30 以降（`--force-if-includes` を使うため）
+- fzf（任意。入っていれば push 先のリモートを絞り込んで選べる。Zed のタスクから見える `PATH` にある必要がある）
 
 ## インストール / アンインストール
 

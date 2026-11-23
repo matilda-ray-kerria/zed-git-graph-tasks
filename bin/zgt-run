@@ -195,6 +195,38 @@ choose() {
   done
 }
 
+# choose_name <見出し> <選択肢...>
+# 名前の一覧から 1 つ選ばせ、その番号を CHOICE に入れる。
+# fzf があれば fzf で絞り込んで選ぶ (Enter でカーソルのある行を選ぶ。Esc / Ctrl-C / 該当なしはキャンセル)。
+# fzf が無い / 使えない (端末が無いなど) ときは choose と同じ番号選択にする。
+# 使う fzf は環境変数 ZGT_FZF で差し替えられる (主にテスト用)
+choose_name() {
+  local title="$1" fzf="${ZGT_FZF:-fzf}" tab i=1 opt line status
+  shift
+  tab="$(printf '\t')"
+  if command -v "$fzf" >/dev/null 2>&1; then
+    # 「番号<TAB>表示」で渡し、番号は表示しない。選ばれた行の番号で元の項目に戻す
+    line="$(for opt in "$@"; do
+      printf '%d\t%s\n' "$i" "$opt"
+      i=$((i + 1))
+    done | "$fzf" --delimiter "$tab" --with-nth 2.. --height 40% --reverse \
+      --header "$title  $(msg FZF_HINT)")"
+    status=$?
+    case "$status" in
+      0)
+        CHOICE="${line%%"$tab"*}"
+        case "$CHOICE" in
+          "" | *[!0-9]*) cancelled ;;
+        esac
+        [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le $# ] || cancelled
+        return 0
+        ;;
+      1 | 130) cancelled ;; # 1: 該当なし  130: Esc / Ctrl-C (fzf(1) の EXIT STATUS)
+    esac
+  fi
+  choose "$title" "$@"
+}
+
 # コマンドを実行し、結果と次にやることを表示して、その終了コードで終える
 execute() {
   local status op
@@ -570,7 +602,7 @@ choose_push_remote() {
     [ "$r" = "$default" ] && opt="$opt $(msg PUSH_REMOTE_DEFAULT)"
     opts+=("$opt")
   done
-  choose "$(msg PUSH_REMOTE_TITLE)" "${opts[@]}"
+  choose_name "$(msg PUSH_REMOTE_TITLE)" "${opts[@]}"
   remote="${names[$((CHOICE - 1))]}"
   echo
 }

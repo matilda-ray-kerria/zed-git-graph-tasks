@@ -14,6 +14,8 @@ git config --global user.email test@example.com
 git config --global init.defaultBranch main
 # エディタが開かれたら失敗させる (タスクがエディタ待ちで止まらないことを確かめる)
 export GIT_EDITOR=false
+# ホストに fzf が入っていても使わない (fzf のテストでは偽の fzf を指定する)
+export ZGT_FZF=zgt-test-no-fzf
 
 TASKS="$ZED_CONFIG_DIR/tasks.json"
 RUNNER="$ZED_CONFIG_DIR/zed-git-graph-tasks/zgt-run"
@@ -300,7 +302,48 @@ git config remote.pushDefault backup
 out="$(run_task "$PUSH" "" 2>&1)"
 check "remote.pushDefault があればそれを既定にする" grep -q '1) backup .* (既定)$' <<<"$out"
 git config --unset remote.pushDefault
+
+echo "== fzf (偽の fzf で確認)"
+cat >"$WORK/fake-fzf" <<'EOF'
+#!/usr/bin/env bash
+# テスト用の偽 fzf: 引数と入力を記録し、FAKE_FZF_MODE / FAKE_FZF_PICK に従って結果を返す
+printf '%s\n' "$@" >"$FAKE_FZF_DIR/args"
+cat >"$FAKE_FZF_DIR/input"
+case "${FAKE_FZF_MODE:-pick}" in
+  cancel) exit 130 ;;
+  nomatch) exit 1 ;;
+  error) exit 2 ;;
+esac
+grep -F -- "$FAKE_FZF_PICK" "$FAKE_FZF_DIR/input" | head -n 1
+EOF
+chmod +x "$WORK/fake-fzf"
+export FAKE_FZF_DIR="$WORK/fzf-log"
+mkdir -p "$FAKE_FZF_DIR"
+# fzf_run <モード> <選ぶ行に含まれる文字列> <標準入力>: 偽の fzf がある状態で push を実行する
+fzf_run() { FAKE_FZF_MODE="$1" FAKE_FZF_PICK="$2" ZGT_FZF="$WORK/fake-fzf" run_task "$PUSH" "$3"; }
+TAB="$(printf '\t')"
+git branch -q fz "$base"
+REF=fz
+out="$(fzf_run pick backup $'1\n' 2>&1)"
+check "fzf で選んだリモート (backup) に push する" \
+  test -n "$(git ls-remote backup refs/heads/fz)" -a -z "$(git ls-remote origin refs/heads/fz)"
+check "fzf には番号を隠して名前と URL を渡す" grep -q -- '--with-nth' "$FAKE_FZF_DIR/args"
+check "fzf の一覧は既定のリモートが先頭" grep -q "^1${TAB}origin .* (既定)$" <(head -n 1 "$FAKE_FZF_DIR/input")
+check "fzf の見出しに説明と操作方法を出す" grep -q 'push 先のリモートを選んでください:  (入力で絞り込み' "$FAKE_FZF_DIR/args"
+check "fzf を使うときは番号の選択肢を出さない" test -z "$(grep '1) origin' <<<"$out")"
+git push -q backup --delete fz 2>/dev/null
+out="$(fzf_run cancel "" "" 2>&1)"
+check "fzf で Esc / Ctrl-C (130) ならキャンセル" \
+  test -n "$(grep 'キャンセルしました' <<<"$out")" -a -z "$(git ls-remote backup refs/heads/fz)$(git ls-remote origin refs/heads/fz)"
+out="$(fzf_run nomatch "" "" 2>&1)"
+check "fzf で該当なし (1) ならキャンセル" grep -q 'キャンセルしました' <<<"$out"
+out="$(fzf_run error "" $'1\n1\n' 2>&1)"
+check "fzf が使えなければ (2) 番号選択になる" \
+  test -n "$(grep '1) origin' <<<"$out")" -a -n "$(git ls-remote origin refs/heads/fz)"
 git remote remove backup
+rm -f "$FAKE_FZF_DIR/args"
+fzf_run pick origin $'1\n' >/dev/null 2>&1
+check "リモートが 1 つなら fzf も使わない" test ! -e "$FAKE_FZF_DIR/args"
 
 echo "== checkout"
 REF=feature SHA="$(git rev-parse feature)"
