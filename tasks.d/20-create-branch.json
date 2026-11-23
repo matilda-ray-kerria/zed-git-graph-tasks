@@ -1,0 +1,9 @@
+[
+  {
+    "label": "Create branch at ${ZED_GIT_SHA_SHORT}…",
+    "command": "__ZGT_RUN__",
+    "args": ["create-branch", "${ZED_GIT_SHA}"],
+    "hide": "on_success",
+    "tags": ["git-command"]
+  }
+]

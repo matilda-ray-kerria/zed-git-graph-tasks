@@ -1,29 +1,39 @@
 # Zed Git Graph Tasks
 
 Zed の Git Graph の右クリックメニュー（Custom Commands）に、VS Code の Git Graph 拡張のような
-push / merge / rebase の操作を追加するタスク集。Zed のグローバル `tasks.json` に差し込むインストーラ付き。
+checkout / ブランチ作成 / merge / rebase / cherry-pick / revert / push の操作を追加するタスク集。
+Zed のグローバル `tasks.json` に差し込むインストーラ付き。
 
 ## 追加されるメニュー
 
-`<ref>` は右クリックしたラベルのブランチ名。
+`<ref>` は右クリックしたラベルのブランチ名、`<sha>` は右クリックしたコミット。
+ラベルを右クリックした場合、`<sha>` はそのラベルが指すコミットになる。
 
 | メニュー | 実行内容 | 確認 |
 | --- | --- | --- |
-| Push `<ref>` → origin | `git push -u origin refs/heads/<ref>:refs/heads/<ref>` | y/N |
-| Push `<ref>` → origin (force-with-lease) | 上記に `--force-with-lease --force-if-includes` | `yes` と入力 |
-| Push `<ref>` → origin (force) | 上記に `--force` | `yes` と入力 |
+| Checkout `<ref>` | ローカルブランチ: `git switch <ref>`<br>リモートブランチ: 追跡するローカルブランチを作って切り替える（既にあればそれに切り替える）<br>タグ: detached HEAD でチェックアウト | y/N |
+| Checkout `<sha>` (detached HEAD) | `git switch --detach <sha>` | y/N |
+| Create branch at `<sha>`… | ブランチ名を入力 → チェックアウトするか選ぶ → `git switch -c` か `git branch` | 名前の入力 |
 | Merge `<ref>` into current branch | `git merge --no-edit <ref>` | y/N |
 | Merge `<ref>` into current branch (--no-ff) | `git merge --no-ff --no-edit <ref>` | y/N |
 | Merge `<ref>` into current branch (--squash) | `git merge --squash <ref>`（コミットはしない） | y/N |
 | Rebase current branch on `<ref>` | `git rebase <ref>` | y/N |
 | Rebase current branch on `<ref>` (interactive) | `git rebase -i <ref>` | y/N |
-| Merge: abort | `git merge --abort` | y/N |
-| Rebase: continue | `git rebase --continue`（エディタを開かない） | なし |
-| Rebase: abort | `git rebase --abort` | y/N |
+| Cherry-pick `<sha>` onto current branch | `git cherry-pick <sha>` | y/N |
+| Cherry-pick `<sha>` onto current branch (-x) | `git cherry-pick -x <sha>`（元のコミットをメッセージに記録） | y/N |
+| Cherry-pick `<sha>` onto current branch (--no-commit) | `git cherry-pick --no-commit <sha>`（コミットはしない） | y/N |
+| Revert `<sha>` | `git revert --no-edit <sha>` | y/N |
+| Push `<ref>` → origin | `git push -u origin refs/heads/<ref>:refs/heads/<ref>` | y/N |
+| Push `<ref>` → origin (force-with-lease) | 上記に `--force-with-lease --force-if-includes` | `yes` と入力 |
+| Push `<ref>` → origin (force) | 上記に `--force` | `yes` と入力 |
+| Continue (merge / rebase / cherry-pick / revert) | 途中で止まっている操作を見分けて `git <操作> --continue`（エディタは開かない） | なし |
+| Abort (merge / rebase / cherry-pick / revert) | 途中で止まっている操作を見分けて `git <操作> --abort` | y/N |
 
-- `<ref>` を使う項目は、ブランチ・タグのラベルを右クリックしたときだけ出る。abort / continue はどこを右クリックしても出る（マージ / リベースの途中でなければ何もしない）
+- `<ref>` を使う項目は、ブランチ・タグのラベルを右クリックしたときだけ出る。`<sha>` だけを使う項目は、コミット行とラベルのどちらを右クリックしても出る。Continue / Abort はどこを右クリックしても出る（途中で止まっている操作が無ければ何もしない）
+- cherry-pick / revert でマージコミットを選んだ場合は、第 1 親を基準にする（`-m 1`）
 - push はローカルブランチのラベルでだけ動く。チェックアウトしていないブランチも push できる。リモートブランチやタグのラベルではエラーで止まる
-- 実行するとタスクのターミナルにリポジトリ・現在のブランチ・コマンドを表示してから確認する。コンフリクトで止まったときは次にやることを表示する
+- 実行するとタスクのターミナルにリポジトリ・現在のブランチ・対象・コマンドを表示してから確認する。コンフリクトで止まったときは次にやることを表示する
+- Continue は未解決のコンフリクトが残っていれば実行せずに止まる
 
 ## 必要なもの
 
@@ -52,7 +62,7 @@ Zed は `tasks.json` の変更を監視しているので、通常は再起動�
   ```jsonc
   [
     // >>> zed-git-graph-tasks (install.sh が管理。このブロック内は編集しないでください)
-    { "label": "Push ${ZED_GIT_REF} → origin", ... },
+    { "label": "Checkout ${ZED_GIT_REF}", ... },
     // <<< zed-git-graph-tasks
     { "label": "既存のタスク", ... },
   ]
@@ -69,14 +79,14 @@ Zed は `tasks.json` の変更を監視しているので、通常は再起動�
 ## タスクを追加・変更する
 
 `tasks.d/` の断片ファイル（JSON 配列）を編集・追加してから、`./install.sh` を再実行する。
-断片ファイルはファイル名順に結合される。`./build.sh` を実行すると結合結果を確認できる。
+断片ファイルはファイル名順に結合され、その順でメニューに並ぶ。`./build.sh` を実行すると結合結果を確認できる。
 
 ```json
 [
   {
-    "label": "Check out ${ZED_GIT_REF}",
+    "label": "Fetch origin",
     "command": "__ZGT_RUN__",
-    "args": ["--confirm", "--", "git", "checkout", "${ZED_GIT_REF}"],
+    "args": ["--confirm", "--", "git", "fetch", "--prune", "origin"],
     "hide": "on_success",
     "tags": ["git-command"]
   }
@@ -84,18 +94,38 @@ Zed は `tasks.json` の変更を監視しているので、通常は再起動�
 ```
 
 - `"tags": ["git-command"]` が無いと Git Graph のメニューに出ない
-- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` のパスに置き換わる。`zgt-run` のオプションは次のとおり
-  - `--confirm`: y/N で確認する
-  - `--danger`: `yes` と入力しないと実行しない
-  - `--message <文>`: 確認の前に表示する説明
-  - `--note <文>`: 成功したときに表示する補足
-  - `--require merge|rebase`: マージ / リベースの途中でなければ何もしない
+- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` のパスに置き換わる
 - 変数は必ず `${ZED_GIT_REF}` のように `{}` で囲む。Zed の変数展開は日本語の文字も変数名の一部とみなすので、`$ZED_GIT_REFを` と書くと展開に失敗し、メニューに出なくなる
 - 使える変数は `ZED_GIT_SHA` / `ZED_GIT_SHA_SHORT` / `ZED_GIT_REPOSITORY_NAME` / `ZED_GIT_REPOSITORY_PATH` / `ZED_GIT_REF`（[Zed Docs: Custom Git Commands](https://zed.dev/docs/tasks#custom-git-commands)）
 
+### zgt-run の使い方
+
+任意のコマンドを確認付きで実行する:
+
+```
+zgt-run [--confirm | --danger] [--message <文>] [--note <文>] [--require <操作>] -- <コマンド> [引数...]
+```
+
+- `--confirm`: y/N で確認する
+- `--danger`: `yes` と入力しないと実行しない
+- `--message <文>`: 確認の前に表示する説明
+- `--note <文>`: 成功したときに表示する補足
+- `--require merge|rebase|cherry-pick|revert`: その操作が途中で止まっていなければ何もしない
+
+組み込みの操作（`tasks.d` の既存タスクが使っている）:
+
+| 操作 | 内容 |
+| --- | --- |
+| `checkout-ref <ref>` | ブランチ / リモートブランチ / タグをチェックアウトする |
+| `checkout-commit <sha>` | コミットを detached HEAD でチェックアウトする |
+| `create-branch <sha>` | ブランチ名を入力してブランチを作る（チェックアウトするかも聞く） |
+| `cherry-pick <sha> [オプション]` | cherry-pick する（マージコミットは `-m 1`） |
+| `revert <sha> [オプション]` | revert する（同上） |
+| `continue` / `abort` | 途中で止まっている merge / rebase / cherry-pick / revert を続行 / 中止する |
+
 ## 注意
 
-- push 先は `origin` で固定している。変えたい場合は `tasks.d/10-push.json` を編集する
+- push 先は `origin` で固定している。変えたい場合は `tasks.d/60-push.json` を編集する
 - プロジェクトごとの `.zed/tasks.json` には対応していない。Zed が Git Graph 用のタスクをグローバルの `tasks.json` からしか読まないため
 - 確認プロンプトはタスクのターミナルで入力を受け付ける。Zed はタスクを実行するとそのターミナルにフォーカスを移す（`reveal` の既定値）ので、そのまま入力できる
 

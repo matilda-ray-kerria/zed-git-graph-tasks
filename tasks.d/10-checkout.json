@@ -1,0 +1,16 @@
+[
+  {
+    "label": "Checkout ${ZED_GIT_REF}",
+    "command": "__ZGT_RUN__",
+    "args": ["checkout-ref", "${ZED_GIT_REF}"],
+    "hide": "on_success",
+    "tags": ["git-command"]
+  },
+  {
+    "label": "Checkout ${ZED_GIT_SHA_SHORT} (detached HEAD)",
+    "command": "__ZGT_RUN__",
+    "args": ["checkout-commit", "${ZED_GIT_SHA}"],
+    "hide": "on_success",
+    "tags": ["git-command"]
+  }
+]
