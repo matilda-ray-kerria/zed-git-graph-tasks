@@ -149,3 +149,40 @@ Zed のグローバル tasks.json から管理ブロックだけを取り除き�
 
 環境変数:
   ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)'
+
+# ---- install.ps1 / uninstall.ps1 (Windows) ----
+# lib/common.ps1 が独自に読む (bash もこのファイルを読み込む)。値は "..." か '...' で書き、
+# $ や \ を含む文は単一引用符で囲む
+MSG_WINDOWS_ONLY_PS="install.ps1 / uninstall.ps1 は Windows 用です。macOS / Linux では ./install.sh / ./uninstall.sh を使ってください"
+MSG_NO_GIT_BASH_PS='Git Bash (Git for Windows の bin\bash.exe) が見つかりません。Git for Windows を入れる (winget install --id Git.Git -e) か、-Bash でパスを指定してください'
+MSG_BASH_NOT_FOUND_PS="見つかりません: %s (-Bash には Git for Windows の bash.exe のパスを指定してください)"
+MSG_BASH_AT_PS="  Git Bash:     %s"
+MSG_BLOCK_NOTE_PS="(install.ps1 が管理。このブロック内は編集しないでください)"
+MSG_LANG_AT_PS='  言語:         %s (変更するには .\install.ps1 -Lang en|ja)'
+MSG_WILL_DELETE_PS="%s を削除します (install.ps1 が作成したファイルのため)"
+MSG_DELETED_PS="✓ %s を削除しました (install.ps1 が作成したファイルのため)"
+MSG_PURGE_HINT_PS='  (バックアップを消すには .\uninstall.ps1 -Purge)'
+
+MSG_INSTALL_USAGE_PS='使い方: .\install.ps1 [-Lang en|ja] [-DryRun] [-Bash PATH]
+
+tasks.d\*.json を結合し、Zed のグローバル tasks.json に管理ブロックとして追加します。
+既に追加済みならブロックを最新の内容に差し替えます。既存のタスクやコメントには触れません。
+タスクは Git Bash で zgt-run を実行します。
+
+  -Lang en|ja  表示の言語 (既定: 前回選んだ言語。初回は en)
+  -DryRun      書き換えずに差分だけ表示する
+  -Bash PATH   Git for Windows の bash.exe (既定: 前回使ったもの。無ければ自動で探す)
+
+環境変数:
+  ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: $env:APPDATA\Zed)'
+
+MSG_UNINSTALL_USAGE_PS='使い方: .\uninstall.ps1 [-DryRun] [-Purge]
+
+Zed のグローバル tasks.json から管理ブロックだけを取り除き、ラッパーを削除します。
+ブロック外のタスクやコメントには触れません。
+
+  -DryRun  書き換えずに差分だけ表示する
+  -Purge   バックアップも含めて設定ディレクトリ内の zed-git-graph-tasks\ を削除する
+
+環境変数:
+  ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: $env:APPDATA\Zed)'

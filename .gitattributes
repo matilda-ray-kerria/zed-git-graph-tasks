@@ -1,0 +1,4 @@
+# bash reads these files: keep LF even in a Windows checkout with core.autocrlf=true
+# (with CRLF, bash stops with "$'\r': command not found")
+*.sh        text eol=lf
+bin/zgt-run text eol=lf

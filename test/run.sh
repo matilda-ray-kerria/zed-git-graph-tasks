@@ -164,11 +164,11 @@ lang_placeholders() {
     done
   )
 }
-# スクリプトが使っているキー
+# スクリプトが使っているキー (Windows 用の .ps1 も含める)
 used_keys() {
-  grep -ohE '(zgt_msg|msg|say|show_field) [A-Z][A-Z0-9_]+|MSG_[A-Z0-9_]+' \
-    "$ROOT"/bin/zgt-run "$ROOT"/*.sh "$ROOT"/lib/common.sh |
-    sed -E 's/^(zgt_msg|msg|say|show_field) /MSG_/' | sort -u
+  grep -ohE '(zgt_msg|msg|say|show_field|Get-ZgtMessage|Write-ZgtMessage|Write-ZgtRaw) [A-Z][A-Z0-9_]+|MSG_[A-Z0-9_]+' \
+    "$ROOT"/bin/zgt-run "$ROOT"/*.sh "$ROOT"/lib/common.sh "$ROOT"/*.ps1 "$ROOT"/lib/common.ps1 |
+    sed -E 's/^(zgt_msg|msg|say|show_field|Get-ZgtMessage|Write-ZgtMessage|Write-ZgtRaw) /MSG_/' | sort -u
 }
 STATE="$ZED_CONFIG_DIR/zed-git-graph-tasks/state"
 MESSAGES="$ZED_CONFIG_DIR/zed-git-graph-tasks/messages.sh"
@@ -178,6 +178,10 @@ check "en / ja で差し込む値 (%s / %d) の数と順番が一致する" \
   test "$(lang_placeholders "$ROOT/lang/en.sh")" = "$(lang_placeholders "$ROOT/lang/ja.sh")"
 check "スクリプトが使うキーはすべて言語ファイルにある" \
   test -z "$(comm -23 <(used_keys) <(lang_keys "$ROOT/lang/en.sh"))"
+# Windows PowerShell 5.1 は BOM の無いスクリプトを ANSI コードページで読むため、.ps1 は ASCII だけで書く
+# (.ps1 自体の動作はここではテストしない。Windows で確認する)
+check "PowerShell スクリプトは ASCII だけで書かれている" \
+  test -z "$(LC_ALL=C grep -l '[^[:print:][:space:]]' "$ROOT"/*.ps1 "$ROOT"/lib/*.ps1)"
 out="$("$ROOT/install.sh" 2>&1)"
 check "--lang を付けなければ英語でインストールする" \
   test "$(zgt_state_get "$STATE" lang)" = en -a -n "$(grep 'Added' <<<"$out")"

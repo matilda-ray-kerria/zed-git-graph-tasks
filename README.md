@@ -32,6 +32,8 @@ Zed のグローバル `tasks.json` に差し込むインストーラ付き。
 
 ## 必要なもの
 
+macOS / Linux の場合。Windows は [Windows](#windows) を参照。
+
 - Zed（Git Graph の Custom Commands に対応した版）
 - bash, awk, sed, diff（macOS / Linux に標準で入っている）
 - jq（`jq --version` で確認。無ければ `brew install jq` や `apt install jq` で入れる）
@@ -82,9 +84,63 @@ Zed は `tasks.json` の変更を監視しているので、通常は再起動�
 - 設定ディレクトリは macOS なら `~/.config/zed`、Linux なら `${XDG_CONFIG_HOME:-~/.config}/zed`。Flatpak 版などで場所が違う場合は `ZED_CONFIG_DIR=<パス> ./install.sh` のように指定する
 - 書き込む前に結果を検証する。読めない `tasks.json` やマーカーが壊れている場合は何も変更せずに止まる
 
+## Windows
+
+`install.ps1` / `uninstall.ps1` を使う。タスクは Git for Windows の Git Bash で `zgt-run` を動かすので、メニューの動きは macOS / Linux と同じ。
+
+### 必要なもの
+
+- Zed（Windows 版。Git Graph の Custom Commands に対応した版）
+- [Git for Windows](https://git-scm.com/install/windows)（Git 2.30 以降）。同梱の `bin\bash.exe` で `zgt-run` を動かす。`winget install --id Git.Git -e` でも入る
+- Windows PowerShell 5.1（Windows に標準で入っている）か PowerShell 7
+- jq は要らない
+- fzf（任意。`winget install fzf` などで入れる。Zed のタスクから見える `PATH` にある必要がある）
+
+### インストール / アンインストール
+
+PowerShell でこのディレクトリに移動して実行する。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun    # 変更内容を確認する(書き換えない)
+powershell -ExecutionPolicy Bypass -File .\install.ps1            # 追加する。再実行すると最新の内容に更新する
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Lang ja   # 表示を日本語にして追加する(既定は英語)
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1          # 取り除く(バックアップは残す)
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Purge   # バックアップも含めて削除する
+```
+
+- `-ExecutionPolicy Bypass` はその実行にだけ効く。Windows の既定の実行ポリシー（Restricted）のままでも、設定を変えずに実行できる。PowerShell 7 なら `powershell` を `pwsh` に替えてもよい
+- `-Help` で使い方を表示する
+- 言語の選び方（`-Lang` を付けなければ前回の言語を引き継ぐ）は macOS / Linux 版と同じ
+
+### macOS / Linux 版との違い
+
+- 設定ディレクトリは `%APPDATA%\Zed`（Zed の `paths::config_dir()` と同じ）。`--user-data-dir` を付けて Zed を起動しているなど場所が違う場合は、`$env:ZED_CONFIG_DIR = '<パス>'` を設定してから実行する
+- Windows の Zed はタスクを PowerShell から起動するので、bash スクリプトの `zgt-run` を直接は実行できない。そのため `command` を Git Bash の `bash.exe` にし、`args` の先頭に `zgt-run` のパスを入れる
+
+  ```jsonc
+  {
+    "label": "Checkout…",
+    "command": "C:\\Program Files\\Git\\bin\\bash.exe",
+    "args": [
+      "C:/Users/<ユーザー>/AppData/Roaming/Zed/zed-git-graph-tasks/zgt-run",
+      "checkout",
+      "${ZED_GIT_SHA}",
+      "${ZED_GIT_REF:@}"
+    ],
+    ...
+  }
+  ```
+
+- 使う `bash.exe` は、`-Bash` で指定したもの → 前回使ったもの → 自動で探したもの、の順に決まる。自動では `GIT_INSTALL_ROOT`、`PATH` 上の `git.exe` の場所、Program Files / `%LOCALAPPDATA%\Programs` / scoop の Git から `bin\bash.exe` を探す。`PATH` 上の `bash` は使わない（`C:\Windows\System32\bash.exe` は WSL を起動するもののため）。Git を入れ直して場所が変わったら `install.ps1` を再実行する
+- `zgt-run` と `messages.sh` は改行を LF にして置く。Windows で clone すると `core.autocrlf` で CRLF になることがあり、bash が `$'\r': command not found` で止まるため。リポジトリ側も `.gitattributes` で LF に固定している
+- `tasks.json` の改行コード（CRLF / LF）と BOM の有無は元のまま保つ
+- `state` には使った `bash.exe` のパス（`bash=`）も保存する
+- `-DryRun` の差分は `git diff --no-index` で表示する
+- 管理ブロックの目印は macOS / Linux 版と同じ。目印の後ろの説明文だけ「install.ps1 が管理」になる
+
 ## タスクを追加・変更する
 
-`tasks.d/` の断片ファイル（JSON 配列）を編集・追加してから、`./install.sh` を再実行する。
+`tasks.d/` の断片ファイル（JSON 配列）を編集・追加してから、`./install.sh`（Windows では `install.ps1`）を再実行する。
 断片ファイルはファイル名順に結合され、その順でメニューに並ぶ。`./build.sh` を実行すると結合結果を確認できる。
 
 ```json
@@ -145,14 +201,21 @@ zgt-run [--confirm | --danger] [--message <文>] [--note <文>] [--require <操�
 
 一時ディレクトリだけを使うので、実際の Zed の設定や Git の設定には触れない。
 
+`install.ps1` / `uninstall.ps1` の動作はテストしていない（Windows で確認する）。
+`test/run.sh` では、PowerShell スクリプトが使う文言のキーが言語ファイルにあることと、
+スクリプトが ASCII だけで書かれていること（Windows PowerShell 5.1 は BOM の無いスクリプトを ANSI として読むため）だけを検査する。
+
 ## 構成
 
 ```
 install.sh / uninstall.sh   インストール / アンインストール
+install.ps1 / uninstall.ps1 Windows 用のインストール / アンインストール (PowerShell)
 build.sh                    tasks.d/*.json を結合する
 tasks.d/                    タスクの断片ファイル
 bin/zgt-run                 確認付きの実行ラッパー
 lang/en.sh / lang/ja.sh     表示の文言 (キーと %s / %d の数・順番を揃える。テストで検査)
 lib/common.sh               共通処理 (tasks.json の解析と差し込み)
+lib/common.ps1              Windows 用の共通処理 (common.sh と build.sh の処理を PowerShell に移したもの)
 test/run.sh                 テスト
+.gitattributes              bash が読むファイルの改行を LF に固定する
 ```
