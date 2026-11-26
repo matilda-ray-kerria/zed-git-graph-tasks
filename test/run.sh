@@ -7,6 +7,9 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/zgt-test.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 export ZED_CONFIG_DIR="$WORK/zed"
+# zgt-run は ~/.local/share/zed-git-graph-tasks/ に置かれるので、HOME も一時ディレクトリにする
+export HOME="$WORK/home"
+mkdir -p "$HOME"
 export GIT_CONFIG_GLOBAL="$WORK/gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
@@ -18,7 +21,7 @@ export GIT_EDITOR=false
 export ZGT_FZF=zgt-test-no-fzf
 
 TASKS="$ZED_CONFIG_DIR/tasks.json"
-RUNNER="$ZED_CONFIG_DIR/zed-git-graph-tasks/zgt-run"
+RUNNER="$HOME/.local/share/zed-git-graph-tasks/zgt-run"
 . "$ROOT/lib/common.sh"
 
 pass=0
@@ -37,7 +40,10 @@ check() { # check <説明> <コマンド...>
   if "$@" >/dev/null 2>&1; then ok "$desc"; else ng "$desc"; fi
 }
 count_tasks() { zgt_jsonc_to_json "$TASKS" | jq 'length'; }
-count_ours() { zgt_jsonc_to_json "$TASKS" | jq --arg r "$RUNNER" '[.[] | select(.command == $r)] | length'; }
+# 管理ブロックのタスク (command が sh で、起動スクリプトの後に zgt-run が続くもの) の数
+count_ours() {
+  zgt_jsonc_to_json "$TASKS" | jq '[.[] | select(.command == "sh" and .args[0] == "-c" and .args[2] == "zgt-run")] | length'
+}
 
 # Zed の代わりに tasks.json のタスクを実行する。REF / SHA に右クリックした ref / コミットを入れておく。
 # REF が空ならコミット行から開いた扱い (Zed と同じく ${ZED_GIT_REF} を使うタスクは出ない、
@@ -94,12 +100,24 @@ check "tasks.json が作られる" test -f "$TASKS"
 check "Zed 形式として読める" zgt_validate_jsonc "$TASKS"
 check "全タスクが入る ($total 個)" test "$(count_ours)" = "$total"
 check "ラッパーが実行可能" test -x "$RUNNER"
+check "tasks.json はローカルの絶対パスを含まない (SSH 接続先でも同じ定義で動くように)" \
+  test -z "$(grep -F "$HOME" "$TASKS")"
+check "起動スクリプトは実行したマシンの \$HOME から zgt-run を探す" \
+  grep -qF '$HOME/.local/share/zed-git-graph-tasks/zgt-run' "$TASKS"
+check "起動スクリプトに zgt-run の取り決めの版を埋め込む" \
+  grep -qF "ZGT_REQUIRED_PROTOCOL=$(sed -n 's/^ZGT_PROTOCOL=//p' "$ROOT/bin/zgt-run")" "$TASKS"
 cp "$TASKS" "$WORK/first"
 "$ROOT/install.sh" >/dev/null
 check "再インストールしても内容が変わらない" cmp -s "$TASKS" "$WORK/first"
 "$ROOT/uninstall.sh" >/dev/null
 check "自分で作った tasks.json はアンインストールで消える" test ! -e "$TASKS"
 check "ラッパーが消える" test ! -e "$RUNNER"
+mkdir -p "$ZED_CONFIG_DIR/zed-git-graph-tasks"
+touch "$ZED_CONFIG_DIR/zed-git-graph-tasks/zgt-run" "$ZED_CONFIG_DIR/zed-git-graph-tasks/messages.sh"
+"$ROOT/install.sh" >/dev/null
+check "以前の版の置き場所 (Zed の設定ディレクトリ) に残ったラッパーを消す" \
+  test ! -e "$ZED_CONFIG_DIR/zed-git-graph-tasks/zgt-run" -a ! -e "$ZED_CONFIG_DIR/zed-git-graph-tasks/messages.sh"
+"$ROOT/uninstall.sh" --purge >/dev/null
 
 echo "== 既存の tasks.json (コメント・末尾カンマあり)"
 mkdir -p "$ZED_CONFIG_DIR"
@@ -171,7 +189,7 @@ used_keys() {
     sed -E 's/^(zgt_msg|msg|say|show_field|Get-ZgtMessage|Write-ZgtMessage|Write-ZgtRaw) /MSG_/' | sort -u
 }
 STATE="$ZED_CONFIG_DIR/zed-git-graph-tasks/state"
-MESSAGES="$ZED_CONFIG_DIR/zed-git-graph-tasks/messages.sh"
+MESSAGES="$HOME/.local/share/zed-git-graph-tasks/messages.sh"
 check "en / ja の言語ファイルのキーが一致する" \
   test "$(lang_keys "$ROOT/lang/en.sh")" = "$(lang_keys "$ROOT/lang/ja.sh")"
 check "en / ja で差し込む値 (%s / %d) の数と順番が一致する" \
@@ -542,6 +560,65 @@ while grep -q '途中で止まっています' <<<"$out"; do
 done
 check "Continue: rebase を最後まで続行できる" test ! -d "$(git rev-parse --git-path rebase-merge)"
 check "rebase: 結果に conflict-a が含まれる" git merge-base --is-ancestor conflict-a HEAD
+
+echo "== SSH 接続先 (偽の ssh で確認)"
+# 偽の ssh: 接続先の名前を記録し、残りの引数を「接続先」(HOME と PATH を差し替えた sh) で実行する。
+# 本物の ssh も、引数をつないだ文字列を接続先のログインシェルに -c で渡す
+cat >"$WORK/fake-ssh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >"$FAKE_SSH_LOG"
+shift
+[ -n "${FAKE_SSH_FAIL:-}" ] && exit 255
+HOME="$FAKE_REMOTE_HOME" PATH="${FAKE_REMOTE_PATH:-$PATH}" exec sh -c "$*"
+EOF
+chmod +x "$WORK/fake-ssh"
+export ZGT_SSH="$WORK/fake-ssh" FAKE_SSH_LOG="$WORK/ssh-host" FAKE_REMOTE_HOME="$WORK/remote-home"
+mkdir -p "$FAKE_REMOTE_HOME"
+REMOTE_DIR="$FAKE_REMOTE_HOME/.local/share/zed-git-graph-tasks"
+for k in MSG_RUNNER_MISSING; do
+  check "$k は sh の '...' に入れられる (' と %s 以外の % を含まない)" \
+    test -z "$( (. "$ROOT/lang/en.sh"; printf '%s\n' "${!k}"; . "$ROOT/lang/ja.sh"; printf '%s\n' "${!k}") |
+      grep -e "'" -e '%[^s]')"
+done
+cp "$TASKS" "$WORK/before-remote"
+"$ROOT/install.sh" --remote devbox --dry-run >/dev/null
+check "--remote --dry-run では接続先に書かない" test ! -e "$REMOTE_DIR"
+out="$("$ROOT/install.sh" --remote devbox 2>&1)"
+check "--remote で接続先に zgt-run を置く" test -x "$REMOTE_DIR/zgt-run"
+check "接続先のメッセージはローカルで選んだ言語 (ja)" cmp -s "$REMOTE_DIR/messages.sh" "$ROOT/lang/ja.sh"
+check "指定した接続先に ssh する" test "$(cat "$FAKE_SSH_LOG")" = devbox
+check "--remote ではローカルの tasks.json を変えない" cmp -s "$TASKS" "$WORK/before-remote"
+check "bash と git があれば注意は出さない" test -z "$(grep '注意' <<<"$out")"
+
+REF="" SHA="$base"
+out="$(HOME="$FAKE_REMOTE_HOME" run_task "$CONTINUE" "" 2>&1)"
+check "接続先 (HOME が違うマシン) でも tasks.json の定義のまま zgt-run が動く" \
+  grep -q '途中で止まっている merge / rebase / cherry-pick / revert はありません' <<<"$out"
+"$ROOT/install.sh" --remote devbox --lang en >/dev/null
+out="$(HOME="$FAKE_REMOTE_HOME" run_task "$CONTINUE" "" 2>&1)"
+check "--remote --lang en で接続先だけ英語になる" \
+  test -n "$(grep 'No merge / rebase' <<<"$out")" -a "$(zgt_state_get "$STATE" lang)" = ja
+mkdir -p "$WORK/empty-home"
+out="$(HOME="$WORK/empty-home" run_task "$CONTINUE" "" 2>&1)"
+check "zgt-run が無いホストでは入れ方を表示する (exit 127)" \
+  test "$(HOME="$WORK/empty-home" run_task "$CONTINUE" "" >/dev/null 2>&1; echo $?)" = 127 \
+  -a -n "$(grep -F 'には zgt-run がありません。Zed を動かしているマシンで ./install.sh --remote' <<<"$out")"
+sed 's/^ZGT_PROTOCOL=.*/ZGT_PROTOCOL=0/' "$ROOT/bin/zgt-run" >"$REMOTE_DIR/zgt-run"
+out="$(HOME="$FAKE_REMOTE_HOME" run_task "$CONTINUE" "" 2>&1)"
+check "接続先の zgt-run が古ければ更新するよう表示する" grep -q 'too old to run this task' <<<"$out"
+
+mkdir -p "$WORK/remote-bin"
+for c in sh tar mkdir chmod; do ln -s "$(command -v "$c")" "$WORK/remote-bin/$c"; done
+out="$(FAKE_REMOTE_PATH="$WORK/remote-bin" "$ROOT/install.sh" --remote devbox 2>&1)"
+check "接続先に bash / git が無ければ注意を出す" \
+  test -n "$(grep '注意: devbox に bash' <<<"$out")" -a -n "$(grep '注意: devbox に git' <<<"$out")"
+out="$(FAKE_SSH_FAIL=1 "$ROOT/install.sh" --remote devbox 2>&1)"
+check "接続に失敗したら失敗として終える" grep -q 'devbox への接続か書き込みに失敗しました' <<<"$out"
+"$ROOT/uninstall.sh" --remote devbox --dry-run >/dev/null
+check "uninstall --remote --dry-run では消さない" test -e "$REMOTE_DIR/zgt-run"
+"$ROOT/uninstall.sh" --remote devbox >/dev/null
+check "uninstall --remote で接続先から取り除く" test ! -e "$REMOTE_DIR"
+check "uninstall --remote ではローカルのラッパーを残す" test -x "$RUNNER"
 
 echo "== 英語の表示"
 git reset -q --hard "$base"

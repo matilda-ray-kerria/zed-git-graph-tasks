@@ -119,36 +119,57 @@ MSG_BLOCK_REMOVED="✓ 管理ブロックを取り除きました: %s"
 MSG_DELETED="✓ %s を削除しました (install.sh が作成したファイルのため)"
 MSG_PURGED="✓ %s を削除しました"
 MSG_PURGE_HINT="  (バックアップを消すには ./uninstall.sh --purge)"
+MSG_WILL_REMOVE_FILES="%s の zgt-run / messages.sh を削除します"
 
-MSG_BUILD_USAGE='使い方: ./build.sh [--runner PATH]
+# ---- SSH 接続先 (install.sh / uninstall.sh --remote と tasks.json の起動スクリプト) ----
+# MSG_RUNNER_MISSING は tasks.json の sh -c '...' に埋め込むので、' と %s 以外の % を含めない
+MSG_RUNNER_MISSING="このホスト (%s) には zgt-run がありません。Zed を動かしているマシンで ./install.sh --remote <SSH の接続先> を実行してください。"
+MSG_RUNNER_OUTDATED="このホスト (%s) の zgt-run は古いため、このタスクを実行できません。Zed を動かしているマシンで ./install.sh --remote <SSH の接続先> を実行して更新してください。"
+MSG_REMOTE_HINT="  SSH 接続先でも使うには: ./install.sh --remote <SSH の接続先> (接続先ごとに 1 回)"
+MSG_REMOTE_DRYRUN="# dry-run: %s の %s に zgt-run と messages.sh (%s) を置きます (書き込みはしていません)"
+MSG_REMOTE_DRYRUN_UNINSTALL="# dry-run: %s の %s から zgt-run と messages.sh を取り除きます (書き込みはしていません)"
+MSG_REMOTE_INSTALLED="✓ %s に zgt-run を置きました: %s"
+MSG_REMOTE_REMOVED="✓ %s から zgt-run を取り除きました"
+MSG_REMOTE_FAILED="%s への接続か書き込みに失敗しました"
+MSG_REMOTE_MISSING_CMD="  注意: %s に %s が見つかりません (zgt-run の実行に必要です)"
+
+MSG_BUILD_USAGE='使い方: ./build.sh [--expand]
 
 tasks.d/*.json を名前順に結合して標準出力に出します。
-  --runner PATH  "command": "__ZGT_RUN__" を PATH に置き換える (install.sh が使用)
+  --expand  "command": "__ZGT_RUN__" を、zgt-run を探して起動する sh -c の起動スクリプトに置き換える (install.sh が使用)
 
 環境変数:
   ZGT_LANG  メッセージの言語 (en / ja。既定: en)'
 
 MSG_INSTALL_USAGE='使い方: ./install.sh [--lang en|ja] [--dry-run]
+        ./install.sh --remote <SSH の接続先> [--lang en|ja] [--dry-run]
 
 tasks.d/*.json を結合し、Zed のグローバル tasks.json に管理ブロックとして追加します。
 既に追加済みならブロックを最新の内容に差し替えます。既存のタスクやコメントには触れません。
+zgt-run と messages.sh は ~/.local/share/zed-git-graph-tasks/ に置きます。
 
-  --lang en|ja  表示の言語 (既定: 前回選んだ言語。初回は en)
-  --dry-run     書き換えずに差分だけ表示する
+  --lang en|ja     表示の言語 (既定: 前回選んだ言語。初回は en)
+  --remote <host>  SSH 接続先の ~/.local/share/zed-git-graph-tasks/ に zgt-run と messages.sh だけを置く
+                   (Zed は SSH 接続先のプロジェクトではタスクを接続先で実行するため。接続先ごとに 1 回)
+  --dry-run        書き換えずに内容だけ表示する
 
 環境変数:
-  ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)'
+  ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)
+  ZGT_SSH         --remote で使う ssh コマンド (既定: ssh)'
 
 MSG_UNINSTALL_USAGE='使い方: ./uninstall.sh [--dry-run] [--purge]
+        ./uninstall.sh --remote <SSH の接続先> [--dry-run]
 
 Zed のグローバル tasks.json から管理ブロックだけを取り除き、ラッパーを削除します。
 ブロック外のタスクやコメントには触れません。
 
-  --dry-run  書き換えずに差分だけ表示する
-  --purge    バックアップも含めて設定ディレクトリ内の zed-git-graph-tasks/ を削除する
+  --dry-run        書き換えずに内容だけ表示する
+  --purge          バックアップも含めて設定ディレクトリ内の zed-git-graph-tasks/ を削除する
+  --remote <host>  SSH 接続先の zgt-run と messages.sh だけを取り除く
 
 環境変数:
-  ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)'
+  ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)
+  ZGT_SSH         --remote で使う ssh コマンド (既定: ssh)'
 
 # ---- install.ps1 / uninstall.ps1 (Windows) ----
 # lib/common.ps1 が独自に読む (bash もこのファイルを読み込む)。値は "..." か '...' で書き、

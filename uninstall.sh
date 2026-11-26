@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# install.sh で追加した管理ブロックとラッパーを取り除く
+# install.sh で追加した管理ブロックとラッパーを取り除く。
+# --remote <host> のときは、SSH 接続先の zgt-run と messages.sh だけを取り除く
 set -euo pipefail
 
 ZGT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,7 +9,8 @@ ZGT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 config_dir="$(zgt_config_dir)"
 tasks_file="$config_dir/tasks.json"
-install_dir="$config_dir/$ZGT_NAME"
+install_dir="$config_dir/$ZGT_NAME" # state と backups
+data_dir="$(zgt_data_dir)"          # zgt-run と messages.sh
 state="$install_dir/state"
 
 # メッセージはインストール時に選んだ言語で出す (無ければ英語)
@@ -16,10 +18,17 @@ zgt_load_lang "$(zgt_state_get "$state" lang)" || zgt_load_lang en
 
 dry_run=0
 purge=0
+remote_host=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
     --purge) purge=1 ;;
+    --remote)
+      [ $# -ge 2 ] || zgt_die "$(zgt_msg NEEDS_VALUE --remote)"
+      remote_host="$2"
+      shift
+      ;;
+    --remote=*) remote_host="${1#--remote=}" ;;
     -h | --help)
       printf '%s\n' "$MSG_UNINSTALL_USAGE"
       exit 0
@@ -29,6 +38,28 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+say() {
+  zgt_msg "$@"
+  echo
+}
+
+# ---- SSH 接続先から取り除く ----
+if [ -n "$remote_host" ]; then
+  ssh_cmd="${ZGT_SSH:-ssh}"
+  zgt_require "$ssh_cmd"
+  if [ "$dry_run" -eq 1 ]; then
+    say REMOTE_DRYRUN_UNINSTALL "$remote_host" "~/.local/share/$ZGT_NAME"
+    exit 0
+  fi
+  # 接続先のログインシェルが何であっても動くよう sh -c '...' で包む (中身に ' を含めない)
+  remote_script="d=\"\$HOME/.local/share/$ZGT_NAME\"; rm -f \"\$d/zgt-run\" \"\$d/messages.sh\"; rmdir \"\$d\" 2>/dev/null; true"
+  "$ssh_cmd" "$remote_host" "sh -c '$remote_script'" ||
+    zgt_die "$(zgt_msg REMOTE_FAILED "$remote_host")"
+  say REMOTE_REMOVED "$remote_host"
+  exit 0
+fi
+
+# ---- ローカルから取り除く ----
 zgt_require jq awk sed diff
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/zgt.XXXXXX")"
@@ -53,11 +84,6 @@ if [ -f "$tasks_file" ]; then
   esac
 fi
 
-say() {
-  zgt_msg "$@"
-  echo
-}
-
 if [ "$dry_run" -eq 1 ]; then
   say DRYRUN
   case "$action" in
@@ -65,7 +91,7 @@ if [ "$dry_run" -eq 1 ]; then
     rewrite) diff -u "$tasks_file" "$tmp/new" || true ;;
     delete) say WILL_DELETE "$tasks_file" ;;
   esac
-  [ -d "$install_dir" ] && say WILL_REMOVE_RUNNER "$install_dir"
+  [ -d "$data_dir" ] && say WILL_REMOVE_FILES "$data_dir"
   [ "$purge" -eq 1 ] && [ -d "$install_dir" ] && say WILL_PURGE "$install_dir"
   exit 0
 fi
@@ -85,8 +111,12 @@ case "$action" in
     ;;
 esac
 
+# ラッパーとメッセージ (以前の版の置き場所に残っていればそれも)
+rm -f "$data_dir/zgt-run" "$data_dir/messages.sh" "$install_dir/zgt-run" "$install_dir/messages.sh"
+rmdir "$data_dir" 2>/dev/null || true
+
 if [ -d "$install_dir" ]; then
-  rm -f "$install_dir/zgt-run" "$install_dir/messages.sh" "$state"
+  rm -f "$state"
   if [ "$purge" -eq 1 ]; then
     rm -rf "$install_dir"
     say PURGED "$install_dir"

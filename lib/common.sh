@@ -67,6 +67,30 @@ zgt_config_dir() {
   fi
 }
 
+# zgt-run と messages.sh の置き場所。ローカルでも SSH 接続先でも同じ場所にする
+# (tasks.json の起動スクリプトが、実行したマシンの $HOME からここを探すため)
+zgt_data_dir() {
+  printf '%s\n' "$HOME/.local/share/$ZGT_NAME"
+}
+
+# zgt-run が持つ取り決めの版 (bin/zgt-run の ZGT_PROTOCOL=<数字> の行)
+zgt_protocol() {
+  sed -n 's/^ZGT_PROTOCOL=\([0-9][0-9]*\)$/\1/p' "$ZGT_ROOT/bin/zgt-run"
+}
+
+# tasks.json の各タスクが sh -c で実行する起動スクリプトを出力する。
+# Zed は SSH 接続先のプロジェクトではタスクを接続先で実行するので、絶対パスではなく
+# 実行したマシンの $HOME から zgt-run を探す。無ければ入れ方を表示して 127 で終える。
+# 表示文 (MSG_RUNNER_MISSING) は sh の '...' の中に入るので ' と %s 以外の % を含めない
+zgt_loader() {
+  local protocol
+  protocol="$(zgt_protocol)"
+  [ -n "$protocol" ] || zgt_die "ZGT_PROTOCOL not found in bin/zgt-run"
+  # shellcheck disable=SC2016
+  printf 'r="$HOME/.local/share/%s/zgt-run"; if [ -x "$r" ]; then export ZGT_REQUIRED_PROTOCOL=%s; exec "$r" "$@"; fi; printf %s "$(uname -n)" >&2; exit 127' \
+    "$ZGT_NAME" "$protocol" "'$MSG_RUNNER_MISSING\n'"
+}
+
 # Zed の tasks.json (コメント・末尾カンマ可) を厳密な JSON に変換して標準出力へ出す
 zgt_jsonc_to_json() {
   LC_ALL=C awk '
@@ -189,7 +213,7 @@ zgt_insert_block() {
 # tasks.d を結合し、tasks.json に差し込む管理ブロックを出力する
 zgt_render_block() {
   local entries
-  entries="$("$ZGT_ROOT/build.sh" --runner "$1")" || return 1
+  entries="$("$ZGT_ROOT/build.sh" --expand)" || return 1
   printf '  %s %s\n' "$ZGT_BEGIN" "$(zgt_msg BLOCK_NOTE)"
   printf '%s\n' "$entries" | sed '1d;$d' | sed '$s/$/,/'
   printf '  %s\n' "$ZGT_END"

@@ -9,13 +9,12 @@ ZGT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # メッセージの言語は環境変数 ZGT_LANG (install.sh が渡す)。無い / 不明なら英語
 zgt_load_lang "${ZGT_LANG:-en}" || zgt_load_lang en
 
-runner="$ZGT_PLACEHOLDER"
+expand=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --runner)
-      [ $# -ge 2 ] || zgt_die "$(zgt_msg NEEDS_VALUE --runner)"
-      runner="$2"
-      shift 2
+    --expand)
+      expand=1
+      shift
       ;;
     -h | --help)
       printf '%s\n' "$MSG_BUILD_USAGE"
@@ -37,6 +36,13 @@ for f in "${files[@]}"; do
     "$f" >/dev/null || zgt_die "$(zgt_msg BAD_FRAGMENT "$f")"
 done
 
-jq -s --indent 2 --arg placeholder "$ZGT_PLACEHOLDER" --arg run "$runner" \
-  'add | map(if .command == $placeholder then .command = $run else . end)' \
-  "${files[@]}"
+if [ "$expand" -eq 0 ]; then
+  jq -s --indent 2 'add' "${files[@]}"
+  exit 0
+fi
+
+# "command": "__ZGT_RUN__" を sh -c <起動スクリプト> zgt-run <args...> に置き換える
+jq -s --indent 2 --arg placeholder "$ZGT_PLACEHOLDER" --arg loader "$(zgt_loader)" '
+  add | map(if .command == $placeholder
+    then .command = "sh" | .args = ["-c", $loader, "zgt-run"] + (.args // [])
+    else . end)' "${files[@]}"

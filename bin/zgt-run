@@ -25,6 +25,11 @@
 #   zgt-run abort                          同上を中止する
 set -u
 
+# tasks.json (の起動スクリプト) とこのラッパーの間の取り決めの版。
+# 組み込みの操作や引数を変えて古いラッパーでは動かなくなるときに上げる。
+# install.sh はこの行を読んで、起動スクリプトに ZGT_REQUIRED_PROTOCOL として埋め込む
+ZGT_PROTOCOL=1
+
 zgt_dir="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$zgt_dir/messages.sh" ]; then
   # shellcheck source=/dev/null
@@ -32,6 +37,13 @@ if [ -f "$zgt_dir/messages.sh" ]; then
 else
   # shellcheck source=/dev/null
   . "$zgt_dir/../lang/${ZGT_LANG:-en}.sh" || exit 2
+fi
+
+# tasks.json が求める版よりこのラッパーが古い (SSH 接続先だけ更新し忘れたなど)
+if [ "${ZGT_REQUIRED_PROTOCOL:-0}" -gt "$ZGT_PROTOCOL" ] 2>/dev/null; then
+  # shellcheck disable=SC2059
+  printf -- "$MSG_RUNNER_OUTDATED\n" "$(uname -n)"
+  exit 1
 fi
 
 mode=run

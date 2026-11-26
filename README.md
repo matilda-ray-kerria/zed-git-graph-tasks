@@ -54,6 +54,25 @@ Zed を動かしているマシンで実行する。
 
 Zed は `tasks.json` の変更を監視しているので、通常は再起動しなくても反映される。
 
+### SSH 接続先で使う
+
+Zed の SSH リモート開発では、タスクの定義はローカル（Zed を動かしているマシン）の `tasks.json` から読まれるが、実行は接続先で行われる。そのため接続先にも `zgt-run` を置く。
+
+```sh
+./install.sh --remote devbox             # devbox に zgt-run と messages.sh を置く(接続先ごとに 1 回)
+./install.sh --remote devbox --dry-run   # 何をするかだけ表示する
+./uninstall.sh --remote devbox           # devbox から取り除く
+```
+
+- Zed を動かしているマシンで実行する。`devbox` は `ssh devbox` で接続できる名前（`~/.ssh/config` のホスト名など）。接続先にこのリポジトリを clone する必要はない
+- 接続先の `~/.local/share/zed-git-graph-tasks/` に置く。接続先に必要なのは bash と git だけ（無ければ注意を表示する）。fzf は任意
+- 表示の言語は `--lang` で選ぶ。指定しなければローカルで選んだ言語
+- このリポジトリを更新したら、ローカルと一緒に接続先も `--remote` で入れ直す。`tasks.json` が求める版より接続先の `zgt-run` が古いと、タスクの実行時に更新するよう表示する
+- 接続先に `zgt-run` が無いままタスクを選ぶと、「このホストには zgt-run がありません」と入れ方を表示する
+- `tasks.json` のタスクは `sh -c '<起動スクリプト>' zgt-run <引数...>` の形にしてある。起動スクリプトは、タスクを実行したマシンの `$HOME/.local/share/zed-git-graph-tasks/zgt-run` を探して起動する。Zed は command を引用符で囲んで接続先に送るので、command に `~` や `$HOME` を書いても展開されない。そのため展開を `sh -c` のスクリプトの中で行っている
+- `--remote` が使う ssh コマンドは環境変数 `ZGT_SSH` で変えられる（主にテスト用）
+- Windows の Zed から SSH 接続した場合は、まだ対応していない（[Windows](#windows) の「macOS / Linux 版との違い」を参照）
+
 ### 表示の言語
 
 - `--lang en`（英語）か `--lang ja`（日本語）で選ぶ。`--lang=ja` の形でもよい
@@ -76,11 +95,13 @@ Zed は `tasks.json` の変更を監視しているので、通常は再起動�
   ```
 
   `tasks.json` が無ければ新しく作る。その場合、アンインストール時にほかの内容が無ければファイルごと消す
-- `<設定ディレクトリ>/zed-git-graph-tasks/` に次のものを置く
+- `~/.local/share/zed-git-graph-tasks/` に次のものを置く（SSH 接続先と同じ場所）
   - `zgt-run`: 確認付きの実行ラッパー
   - `messages.sh`: 選んだ言語の文言（`lang/<言語>.sh` のコピー）
+- `<設定ディレクトリ>/zed-git-graph-tasks/` に次のものを置く
   - `state`: インストール時の状態（`tasks.json` を新しく作ったか、選んだ言語）
   - `backups/`: 書き換えのたびに、直前の `tasks.json` を保存する
+- 以前の版は `zgt-run` / `messages.sh` も `<設定ディレクトリ>/zed-git-graph-tasks/` に置いていた。再インストールすると新しい場所に移す
 - 設定ディレクトリは macOS なら `~/.config/zed`、Linux なら `${XDG_CONFIG_HOME:-~/.config}/zed`。Flatpak 版などで場所が違う場合は `ZED_CONFIG_DIR=<パス> ./install.sh` のように指定する
 - 書き込む前に結果を検証する。読めない `tasks.json` やマーカーが壊れている場合は何も変更せずに止まる
 
@@ -137,6 +158,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Purge   # バックア
 - `state` には使った `bash.exe` のパス（`bash=`）も保存する
 - `-DryRun` の差分は `git diff --no-index` で表示する
 - 管理ブロックの目印は macOS / Linux 版と同じ。目印の後ろの説明文だけ「install.ps1 が管理」になる
+- `zgt-run` と `messages.sh` は `%APPDATA%\Zed\zed-git-graph-tasks\` に置き、`tasks.json` からはその絶対パスで呼ぶ。そのため、Windows の Zed から SSH で接続したプロジェクトでは、接続先に `bash.exe` も `zgt-run` も無く実行できない（[SSH 接続先で使う](#ssh-接続先で使う) の仕組みにはまだ対応していない）
 
 ## タスクを追加・変更する
 
@@ -156,7 +178,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Purge   # バックア
 ```
 
 - `"tags": ["git-command"]` が無いと Git Graph のメニューに出ない
-- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` のパスに置き換わる
+- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` を起動する形に置き換わる（macOS / Linux では `sh -c '<起動スクリプト>' zgt-run <args...>`、Windows では Git Bash の `bash.exe <zgt-run のパス> <args...>`）
+- 組み込みの操作や引数を変えて、古い `zgt-run` では動かなくなる場合は、`bin/zgt-run` の `ZGT_PROTOCOL` を 1 つ上げる。SSH 接続先の `zgt-run` が古いままだと、実行時に更新するよう表示される
 - 変数は必ず `${ZED_GIT_REF}` のように `{}` で囲む。Zed の変数展開は日本語の文字も変数名の一部とみなすので、`$ZED_GIT_REFを` と書くと展開に失敗し、メニューに出なくなる
 - 使える変数は `ZED_GIT_SHA` / `ZED_GIT_SHA_SHORT` / `ZED_GIT_REPOSITORY_NAME` / `ZED_GIT_REPOSITORY_PATH` / `ZED_GIT_REF`（[Zed Docs: Custom Git Commands](https://zed.dev/docs/tasks#custom-git-commands)）
 - `${ZED_GIT_REF}` を使うタスクは、ラベルを右クリックしたときだけ出る（コミット行には ref が無いため）。コミット行にも出したいときは、`${ZED_GIT_REF:@}` のように既定値を付ける。この書き方だと、コミット行から開いたときは `@` になる。`@` はブランチ名に使えない文字なので、本物の ref と区別できる。`zgt-run` の組み込みの操作は `@` を「ref なし」として扱う

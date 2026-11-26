@@ -120,37 +120,58 @@ MSG_BLOCK_REMOVED="✓ Removed the managed block: %s"
 MSG_DELETED="✓ Deleted %s (it was created by install.sh)"
 MSG_PURGED="✓ Deleted %s"
 MSG_PURGE_HINT="  (to delete the backups: ./uninstall.sh --purge)"
+MSG_WILL_REMOVE_FILES="Will remove zgt-run / messages.sh in %s"
 
-MSG_BUILD_USAGE='Usage: ./build.sh [--runner PATH]
+# ---- SSH hosts (install.sh / uninstall.sh --remote and the launcher in tasks.json) ----
+# MSG_RUNNER_MISSING is embedded in sh -c '...' in tasks.json: no single quotes, and no % except %s
+MSG_RUNNER_MISSING="zgt-run is not installed on this host (%s). On the machine running Zed, run ./install.sh --remote <ssh host>."
+MSG_RUNNER_OUTDATED="zgt-run on this host (%s) is too old to run this task. On the machine running Zed, run ./install.sh --remote <ssh host> to update it."
+MSG_REMOTE_HINT="  To use it on SSH hosts too: ./install.sh --remote <ssh host> (once per host)"
+MSG_REMOTE_DRYRUN="# dry-run: would put zgt-run and messages.sh on %s in %s (%s). Nothing was written"
+MSG_REMOTE_DRYRUN_UNINSTALL="# dry-run: would remove zgt-run and messages.sh on %s from %s. Nothing was written"
+MSG_REMOTE_INSTALLED="✓ Put zgt-run on %s: %s"
+MSG_REMOTE_REMOVED="✓ Removed zgt-run from %s"
+MSG_REMOTE_FAILED="Failed to connect to or write on %s"
+MSG_REMOTE_MISSING_CMD="  Warning: on %s, %s was not found (required by zgt-run)"
+
+MSG_BUILD_USAGE='Usage: ./build.sh [--expand]
 
 Combines tasks.d/*.json in name order and prints the result to stdout.
-  --runner PATH  Replace "command": "__ZGT_RUN__" with PATH (used by install.sh)
+  --expand  Replace "command": "__ZGT_RUN__" with a sh -c launcher that finds and runs zgt-run (used by install.sh)
 
 Environment:
   ZGT_LANG  Message language (en / ja, default: en)'
 
 MSG_INSTALL_USAGE='Usage: ./install.sh [--lang en|ja] [--dry-run]
+       ./install.sh --remote <ssh host> [--lang en|ja] [--dry-run]
 
 Combines tasks.d/*.json and adds them to the global Zed tasks.json as a managed block.
 If the block is already there, it is replaced with the latest content.
 Other tasks and comments are left untouched.
+zgt-run and messages.sh are placed in ~/.local/share/zed-git-graph-tasks/.
 
-  --lang en|ja  Message language (default: the previous choice, or en on the first install)
-  --dry-run     Only show the diff without writing
+  --lang en|ja     Message language (default: the previous choice, or en on the first install)
+  --remote <host>  Only put zgt-run and messages.sh in ~/.local/share/zed-git-graph-tasks/ on an SSH host
+                   (Zed runs tasks of SSH projects on the remote host. Run once per host)
+  --dry-run        Only show what would change without writing
 
 Environment:
-  ZED_CONFIG_DIR  Zed config directory (default: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)'
+  ZED_CONFIG_DIR  Zed config directory (default: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)
+  ZGT_SSH         ssh command used by --remote (default: ssh)'
 
 MSG_UNINSTALL_USAGE='Usage: ./uninstall.sh [--dry-run] [--purge]
+       ./uninstall.sh --remote <ssh host> [--dry-run]
 
 Removes only the managed block from the global Zed tasks.json and deletes the wrapper.
 Other tasks and comments are left untouched.
 
-  --dry-run  Only show the diff without writing
-  --purge    Also delete zed-git-graph-tasks/ in the config directory, including the backups
+  --dry-run        Only show what would change without writing
+  --purge          Also delete zed-git-graph-tasks/ in the config directory, including the backups
+  --remote <host>  Only remove zgt-run and messages.sh on an SSH host
 
 Environment:
-  ZED_CONFIG_DIR  Zed config directory (default: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)'
+  ZED_CONFIG_DIR  Zed config directory (default: macOS ~/.config/zed, Linux ${XDG_CONFIG_HOME:-~/.config}/zed)
+  ZGT_SSH         ssh command used by --remote (default: ssh)'
 
 # ---- install.ps1 / uninstall.ps1 (Windows) ----
 # lib/common.ps1 reads these with its own parser (bash also sources this file): write each value
