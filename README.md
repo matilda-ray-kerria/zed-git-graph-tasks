@@ -69,7 +69,8 @@ Zed の SSH リモート開発では、タスクの定義はローカル（Zed �
 - 表示の言語は `--lang` で選ぶ。指定しなければローカルで選んだ言語
 - このリポジトリを更新したら、ローカルと一緒に接続先も `--remote` で入れ直す。`tasks.json` が求める版より接続先の `zgt-run` が古いと、タスクの実行時に更新するよう表示する
 - 接続先に `zgt-run` が無いままタスクを選ぶと、「このホストには zgt-run がありません」と入れ方を表示する
-- `tasks.json` のタスクは `sh -c '<起動スクリプト>' zgt-run <引数...>` の形にしてある。起動スクリプトは、タスクを実行したマシンの `$HOME/.local/share/zed-git-graph-tasks/zgt-run` を探して起動する。Zed は command を引用符で囲んで接続先に送るので、command に `~` や `$HOME` を書いても展開されない。そのため展開を `sh -c` のスクリプトの中で行っている
+- `tasks.json` のタスクは `"command": "sh -c '<起動スクリプト>'"` の形にしてある。起動スクリプトは、タスクを実行したマシンの `$HOME/.local/share/zed-git-graph-tasks/zgt-run` を探して起動する
+- Zed はタスクの command と args を引用符で囲まずに空白でつなぎ、利用者のシェル（SSH 接続先では接続先のシェル）に `-i -c` で渡す（Zed の `prepare_task_for_spawn`）。そのため command は `sh -c '...'` の 1 語だけにし、`${ZED_GIT_SHA}` などの値は `env` の `ZGT_ARG1`、`ZGT_ARG2`… で渡して、起動スクリプトの中で `"$ZGT_ARG1"` として `zgt-run` に渡している。利用者のシェルが zsh でも bash でも同じように動き（テストでは zsh / bash / dash で確認）、ref 名に含まれる `;` や `$(...)`（git はこれらを ref 名に使える）がシェルに実行されることもない
 - `--remote` が使う ssh コマンドは環境変数 `ZGT_SSH` で変えられる（主にテスト用）
 - Windows の Zed から SSH 接続した場合は、まだ対応していない（[Windows](#windows) の「macOS / Linux 版との違い」を参照）
 
@@ -178,7 +179,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Purge   # バックア
 ```
 
 - `"tags": ["git-command"]` が無いと Git Graph のメニューに出ない
-- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` を起動する形に置き換わる（macOS / Linux では `sh -c '<起動スクリプト>' zgt-run <args...>`、Windows では Git Bash の `bash.exe <zgt-run のパス> <args...>`）
+- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` を起動する形に置き換わる（macOS / Linux では `"command": "sh -c '<起動スクリプト>'"` になり、`args` は無くなる。Windows では Git Bash の `bash.exe <zgt-run のパス> <args...>`）
+  - macOS / Linux では、`args` のうち記号を含まない語（サブコマンド名、`--confirm`、`git` など）は起動スクリプトにそのまま入る。それ以外（`${ZED_...}` や空白・記号を含む引数）は `env` の `ZGT_ARG<n>` で渡す（[SSH 接続先で使う](#ssh-接続先で使う) の仕組みを参照）。そのため断片ファイルの `env` には `ZGT_ARG` で始まる名前を使えない
 - 組み込みの操作や引数を変えて、古い `zgt-run` では動かなくなる場合は、`bin/zgt-run` の `ZGT_PROTOCOL` を 1 つ上げる。SSH 接続先の `zgt-run` が古いままだと、実行時に更新するよう表示される
 - 変数は必ず `${ZED_GIT_REF}` のように `{}` で囲む。Zed の変数展開は日本語の文字も変数名の一部とみなすので、`$ZED_GIT_REFを` と書くと展開に失敗し、メニューに出なくなる
 - 使える変数は `ZED_GIT_SHA` / `ZED_GIT_SHA_SHORT` / `ZED_GIT_REPOSITORY_NAME` / `ZED_GIT_REPOSITORY_PATH` / `ZED_GIT_REF`（[Zed Docs: Custom Git Commands](https://zed.dev/docs/tasks#custom-git-commands)）

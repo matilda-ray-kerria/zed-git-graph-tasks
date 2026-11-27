@@ -123,7 +123,7 @@ MSG_PURGE_HINT="  (to delete the backups: ./uninstall.sh --purge)"
 MSG_WILL_REMOVE_FILES="Will remove zgt-run / messages.sh in %s"
 
 # ---- SSH hosts (install.sh / uninstall.sh --remote and the launcher in tasks.json) ----
-# MSG_RUNNER_MISSING is embedded in sh -c '...' in tasks.json: no single quotes, and no % except %s
+# MSG_RUNNER_MISSING is embedded in printf "..." inside sh -c '...' in tasks.json: no ' " $ ` \, and no % except %s
 MSG_RUNNER_MISSING="zgt-run is not installed on this host (%s). On the machine running Zed, run ./install.sh --remote <ssh host>."
 MSG_RUNNER_OUTDATED="zgt-run on this host (%s) is too old to run this task. On the machine running Zed, run ./install.sh --remote <ssh host> to update it."
 MSG_REMOTE_HINT="  To use it on SSH hosts too: ./install.sh --remote <ssh host> (once per host)"

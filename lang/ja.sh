@@ -122,7 +122,7 @@ MSG_PURGE_HINT="  (バックアップを消すには ./uninstall.sh --purge)"
 MSG_WILL_REMOVE_FILES="%s の zgt-run / messages.sh を削除します"
 
 # ---- SSH 接続先 (install.sh / uninstall.sh --remote と tasks.json の起動スクリプト) ----
-# MSG_RUNNER_MISSING は tasks.json の sh -c '...' に埋め込むので、' と %s 以外の % を含めない
+# MSG_RUNNER_MISSING は tasks.json の sh -c '...' の中の printf "..." に埋め込むので、' " $ ` \ と %s 以外の % を含めない
 MSG_RUNNER_MISSING="このホスト (%s) には zgt-run がありません。Zed を動かしているマシンで ./install.sh --remote <SSH の接続先> を実行してください。"
 MSG_RUNNER_OUTDATED="このホスト (%s) の zgt-run は古いため、このタスクを実行できません。Zed を動かしているマシンで ./install.sh --remote <SSH の接続先> を実行して更新してください。"
 MSG_REMOTE_HINT="  SSH 接続先でも使うには: ./install.sh --remote <SSH の接続先> (接続先ごとに 1 回)"

@@ -40,10 +40,14 @@ check() { # check <説明> <コマンド...>
   if "$@" >/dev/null 2>&1; then ok "$desc"; else ng "$desc"; fi
 }
 count_tasks() { zgt_jsonc_to_json "$TASKS" | jq 'length'; }
-# 管理ブロックのタスク (command が sh で、起動スクリプトの後に zgt-run が続くもの) の数
+# 管理ブロックのタスク (command が zgt-run の起動スクリプトのもの) の数
+LOADER_HEAD="sh -c 'r=\"\$HOME/.local/share/zed-git-graph-tasks/zgt-run\";"
 count_ours() {
-  zgt_jsonc_to_json "$TASKS" | jq '[.[] | select(.command == "sh" and .args[0] == "-c" and .args[2] == "zgt-run")] | length'
+  zgt_jsonc_to_json "$TASKS" |
+    jq --arg h "$LOADER_HEAD" '[.[] | select(.command | startswith($h))] | length'
 }
+# POSIX シェルの '...' で囲む (Zed が SSH のコマンドを組み立てるときの shlex::try_quote の代わり)
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 # Zed の代わりに tasks.json のタスクを実行する。REF / SHA に右クリックした ref / コミットを入れておく。
 # REF が空ならコミット行から開いた扱い (Zed と同じく ${ZED_GIT_REF} を使うタスクは出ない、
@@ -51,30 +55,47 @@ count_ours() {
 #   run_task <ラベル(テンプレート)> <標準入力に渡す内容>
 REF=""
 SHA=""
+#
+# Zed (crates/terminal_view/src/terminal_panel.rs の prepare_task_for_spawn) と同じく、
+# command / args / env の ${ZED_...} を置き換えたあと、command と args を引用符なしで
+# 空白でつなぎ、シェル (TEST_SHELL、既定は zsh) の -i -c に渡す。ZED_GIT_* は環境変数にも入る。
+# VIA_SSH に接続先を入れると、Zed の SSH 接続 (crates/remote/src/transport/ssh.rs の
+# build_command_posix) と同じく cd <dir> && exec env K=V... <shell> -i -c <...> を ssh に渡す
+TEST_SHELL="$(command -v zsh || command -v bash)"
+VIA_SSH=""
 run_task() {
-  local label="$1" input="$2" line
-  local -a cmd=() envs=()
+  local label="$1" input="$2" line joined remote kv
+  local -a envs=()
   if [ -z "$REF" ] && zgt_jsonc_to_json "$TASKS" |
     jq -e --arg l "$label" '.[] | select(.label == $l) | tostring | contains("${ZED_GIT_REF}")' >/dev/null; then
     echo "コミット行のメニューには出ないタスク: $label" >&2
     return 98
   fi
-  while IFS= read -r line; do cmd+=("$line"); done < <(
-    zgt_jsonc_to_json "$TASKS" | jq -r --arg l "$label" --arg ref "$REF" --arg sha "$SHA" \
-      --arg short "${SHA:0:7}" '
-      .[] | select(.label == $l) | ([.command] + .args)[]
-      | gsub("\\$\\{ZED_GIT_REF\\}"; $ref)
+  local subst='
+    def subst: gsub("\\$\\{ZED_GIT_REF\\}"; $ref)
       | gsub("\\$\\{ZED_GIT_REF:(?<d>[^}]*)\\}"; if $ref == "" then .d else $ref end)
       | gsub("\\$\\{ZED_GIT_SHA\\}"; $sha)
-      | gsub("\\$\\{ZED_GIT_SHA_SHORT\\}"; $short)')
-  while IFS= read -r line; do envs+=("$line"); done < <(
-    zgt_jsonc_to_json "$TASKS" | jq -r --arg l "$label" '
-      .[] | select(.label == $l) | (.env // {}) | to_entries[] | "\(.key)=\(.value)"')
-  [ ${#cmd[@]} -gt 0 ] || {
+      | gsub("\\$\\{ZED_GIT_SHA_SHORT\\}"; $short);'
+  local -a jq_args=(-r --arg l "$label" --arg ref "$REF" --arg sha "$SHA" --arg short "${SHA:0:7}")
+  joined="$(zgt_jsonc_to_json "$TASKS" | jq "${jq_args[@]}" "$subst"'
+    .[] | select(.label == $l) | [.command] + (.args // []) | map(subst) | join(" ")')"
+  [ -n "$joined" ] || {
     echo "task not found: $label" >&2
     return 99
   }
-  printf '%s\n' "$input" | env ${envs[@]+"${envs[@]}"} "${cmd[@]}"
+  while IFS= read -r line; do envs+=("$line"); done < <(
+    zgt_jsonc_to_json "$TASKS" | jq "${jq_args[@]}" "$subst"'
+      .[] | select(.label == $l) | (.env // {}) | to_entries[] | "\(.key)=\(.value | subst)"')
+  envs+=("ZED_GIT_SHA=$SHA" "ZED_GIT_SHA_SHORT=${SHA:0:7}")
+  [ -n "$REF" ] && envs+=("ZED_GIT_REF=$REF")
+  if [ -z "$VIA_SSH" ]; then
+    printf '%s\n' "$input" | env "${envs[@]}" "$TEST_SHELL" -i -c "$joined"
+    return
+  fi
+  remote="cd $(sq "$PWD") && exec env"
+  for kv in "${envs[@]}"; do remote+=" $(sq "$kv")"; done
+  remote+=" $(sq "$TEST_SHELL") '-i' '-c' $(sq "$joined")"
+  printf '%s\n' "$input" | "$ZGT_SSH" "$VIA_SSH" "$remote"
 }
 cur() { git symbolic-ref --short -q HEAD || echo DETACHED; }
 subject() { git log -1 --format=%s "${1:-HEAD}"; }
@@ -93,6 +114,22 @@ check "変数は \${...} 形式だけを使う (日本語が変数名に含ま�
 # Zed は未定義の ZED_ 変数を含むタスクをメニューに出さない (コミット行には ZED_GIT_REF が無い)
 commit_menu="$("$ROOT/build.sh" | jq '[.[] | select(tostring | contains("${ZED_GIT_REF}") | not)] | length')"
 check "コミット行のメニューに出るのは push 以外の 8 個 (全 $total 個)" test "$commit_menu" = 8 -a "$total" = 9
+# Zed は args を引用符なしで利用者のシェルに渡すので、args は使わず値は env で渡す
+check "--expand の結果は args を持たず、値は env の ZGT_ARG<n> で渡す" \
+  jq -e 'all(.[]; has("args") | not)
+    and ([.[] | .env // {} | keys[]] | length > 0 and all(test("^ZGT_ARG[0-9]+$")))' \
+  <<<"$("$ROOT/build.sh" --expand)"
+mkdir -p "$WORK/badroot/tasks.d"
+cp -R "$ROOT/build.sh" "$ROOT/lib" "$ROOT/lang" "$ROOT/bin" "$WORK/badroot/"
+printf '[{"label": "x", "command": "__ZGT_RUN__", "args": ["--message", "a b; $(c)", "--", "echo", "ok"]}]\n' \
+  >"$WORK/badroot/tasks.d/10.json"
+check "記号の無い語は command にそのまま書き、空白や記号を含む引数は env で渡す" \
+  jq -e '.[0] | (.command | contains("exec \"$r\" --message \"$ZGT_ARG1\" -- echo ok;"))
+    and .env == {"ZGT_ARG1": "a b; $(c)"}' <<<"$("$WORK/badroot/build.sh" --expand)"
+printf '[{"label": "x", "command": "__ZGT_RUN__", "args": ["a", "${ZED_GIT_SHA}"], "env": {"ZGT_ARG1": "y"}}]\n' \
+  >"$WORK/badroot/tasks.d/10.json"
+check "env に ZGT_ARG を書いた断片は build で止める" \
+  test "$("$WORK/badroot/build.sh" --expand >/dev/null 2>&1; echo $?)" != 0
 
 echo "== 新規インストール (tasks.json なし)"
 "$ROOT/install.sh" >/dev/null
@@ -561,6 +598,26 @@ done
 check "Continue: rebase を最後まで続行できる" test ! -d "$(git rev-parse --git-path rebase-merge)"
 check "rebase: 結果に conflict-a が含まれる" git merge-base --is-ancestor conflict-a HEAD
 
+echo "== 利用者のシェル (Zed は command と args を引用符なしで \$SHELL -i -c に渡す)"
+git reset -q --hard "$base"
+REF="" SHA="$base"
+for s in zsh bash dash sh; do
+  command -v "$s" >/dev/null 2>&1 || continue
+  out="$(TEST_SHELL="$(command -v "$s")" run_task "$CONTINUE" "" 2>&1)"
+  check "$s から起動しても zgt-run が動く" \
+    grep -q '途中で止まっている merge / rebase / cherry-pick / revert はありません' <<<"$out"
+done
+# git は ref 名に ; & $ ( ) ` > < を許す。値は env で渡すので、シェルには解釈させない
+# shellcheck disable=SC2016
+evil='evil;true>PWNED1;$(true>PWNED2)&`true>PWNED3`'
+git branch "$evil" main
+REF="$evil" SHA="$(git rev-parse main)"
+out="$(run_task "$CHECKOUT" "" 2>&1)"
+check "ref 名の ; \$(...) \` などを利用者のシェルに実行させない" \
+  test ! -e PWNED1 -a ! -e PWNED2 -a ! -e PWNED3
+check "記号を含む ref 名もそのまま zgt-run に渡る" grep -qF "$evil" <<<"$out"
+git branch -q -D "$evil"
+
 echo "== SSH 接続先 (偽の ssh で確認)"
 # 偽の ssh: 接続先の名前を記録し、残りの引数を「接続先」(HOME と PATH を差し替えた sh) で実行する。
 # 本物の ssh も、引数をつないだ文字列を接続先のログインシェルに -c で渡す
@@ -576,9 +633,9 @@ export ZGT_SSH="$WORK/fake-ssh" FAKE_SSH_LOG="$WORK/ssh-host" FAKE_REMOTE_HOME="
 mkdir -p "$FAKE_REMOTE_HOME"
 REMOTE_DIR="$FAKE_REMOTE_HOME/.local/share/zed-git-graph-tasks"
 for k in MSG_RUNNER_MISSING; do
-  check "$k は sh の '...' に入れられる (' と %s 以外の % を含まない)" \
+  check "$k は sh の '...' の中の \"...\" に入れられる (' \" \$ \` \\ と %s 以外の % を含まない)" \
     test -z "$( (. "$ROOT/lang/en.sh"; printf '%s\n' "${!k}"; . "$ROOT/lang/ja.sh"; printf '%s\n' "${!k}") |
-      grep -e "'" -e '%[^s]')"
+      grep -e "['\"\$\`\\\\]" -e '%[^s]' -e '%$')"
 done
 cp "$TASKS" "$WORK/before-remote"
 "$ROOT/install.sh" --remote devbox --dry-run >/dev/null
@@ -591,20 +648,27 @@ check "--remote ではローカルの tasks.json を変えない" cmp -s "$TASKS
 check "bash と git があれば注意は出さない" test -z "$(grep '注意' <<<"$out")"
 
 REF="" SHA="$base"
-out="$(HOME="$FAKE_REMOTE_HOME" run_task "$CONTINUE" "" 2>&1)"
-check "接続先 (HOME が違うマシン) でも tasks.json の定義のまま zgt-run が動く" \
+out="$(VIA_SSH=devbox run_task "$CONTINUE" "" 2>&1)"
+check "接続先 (HOME が違うマシン) でも tasks.json の定義のまま接続先の zgt-run が動く" \
   grep -q '途中で止まっている merge / rebase / cherry-pick / revert はありません' <<<"$out"
+REF=feature SHA="$(git rev-parse feature)"
+out="$(VIA_SSH=devbox run_task "$PUSH" "" 2>&1)"
+check "接続先でも ref の値 (env の ZGT_ARG1) が zgt-run に渡る" grep -q '^対象  *feature' <<<"$out"
+REF="" SHA="$base"
 "$ROOT/install.sh" --remote devbox --lang en >/dev/null
-out="$(HOME="$FAKE_REMOTE_HOME" run_task "$CONTINUE" "" 2>&1)"
+out="$(VIA_SSH=devbox run_task "$CONTINUE" "" 2>&1)"
 check "--remote --lang en で接続先だけ英語になる" \
   test -n "$(grep 'No merge / rebase' <<<"$out")" -a "$(zgt_state_get "$STATE" lang)" = ja
 mkdir -p "$WORK/empty-home"
-out="$(HOME="$WORK/empty-home" run_task "$CONTINUE" "" 2>&1)"
+out="$(FAKE_REMOTE_HOME="$WORK/empty-home" VIA_SSH=devbox run_task "$CONTINUE" "" 2>&1)"
 check "zgt-run が無いホストでは入れ方を表示する (exit 127)" \
-  test "$(HOME="$WORK/empty-home" run_task "$CONTINUE" "" >/dev/null 2>&1; echo $?)" = 127 \
-  -a -n "$(grep -F 'には zgt-run がありません。Zed を動かしているマシンで ./install.sh --remote' <<<"$out")"
+  test "$(FAKE_REMOTE_HOME="$WORK/empty-home" VIA_SSH=devbox run_task "$CONTINUE" "" >/dev/null 2>&1
+    echo $?)" = 127 \
+  -a -n "$(grep -F "このホスト ($(uname -n)) には zgt-run がありません。Zed を動かしているマシンで ./install.sh --remote" <<<"$out")"
+check "zgt-run が無くても zsh のエラー (exit: too many arguments など) は出ない" \
+  test "$(wc -l <<<"$out" | tr -d ' ')" = 1
 sed 's/^ZGT_PROTOCOL=.*/ZGT_PROTOCOL=0/' "$ROOT/bin/zgt-run" >"$REMOTE_DIR/zgt-run"
-out="$(HOME="$FAKE_REMOTE_HOME" run_task "$CONTINUE" "" 2>&1)"
+out="$(VIA_SSH=devbox run_task "$CONTINUE" "" 2>&1)"
 check "接続先の zgt-run が古ければ更新するよう表示する" grep -q 'too old to run this task' <<<"$out"
 
 mkdir -p "$WORK/remote-bin"

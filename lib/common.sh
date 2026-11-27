@@ -78,17 +78,37 @@ zgt_protocol() {
   sed -n 's/^ZGT_PROTOCOL=\([0-9][0-9]*\)$/\1/p' "$ZGT_ROOT/bin/zgt-run"
 }
 
-# tasks.json の各タスクが sh -c で実行する起動スクリプトを出力する。
+# tasks.json の各タスクの command (sh -c '<起動スクリプト>') のひな形を出力する。
+# ZGT_ARGS_TOKEN の位置に、zgt-run に渡す引数 (sh の語) を build.sh が入れる。
+#
+# Zed はタスクの command と args を引用符で囲まずに空白でつなぎ、利用者のシェル
+# ($SHELL -i -c、SSH 接続先では接続先のシェル) に渡す。zsh / bash / fish のどれでも
+# 同じ意味になるよう command は sh -c '...' の 1 語だけにし、ref やコミットの値は
+# env (ZGT_ARG1...) で渡す (ref 名の ; や $(...) をシェルに解釈させないためでもある)。
 # Zed は SSH 接続先のプロジェクトではタスクを接続先で実行するので、絶対パスではなく
 # 実行したマシンの $HOME から zgt-run を探す。無ければ入れ方を表示して 127 で終える。
-# 表示文 (MSG_RUNNER_MISSING) は sh の '...' の中に入るので ' と %s 以外の % を含めない
+ZGT_ARGS_TOKEN='@ZGT_ARGS@'
 zgt_loader() {
   local protocol
   protocol="$(zgt_protocol)"
   [ -n "$protocol" ] || zgt_die "ZGT_PROTOCOL not found in bin/zgt-run"
+  # 表示文は '...' の中の "..." に入り、printf の書式にもなる
+  case "$MSG_RUNNER_MISSING" in
+    *[\'\"\$\`\\]*) zgt_die "MSG_RUNNER_MISSING must not contain ' \" \$ \` \\" ;;
+  esac
+  case "$(printf '%s' "$MSG_RUNNER_MISSING" | sed 's/%s//g')" in
+    *%*) zgt_die "MSG_RUNNER_MISSING must not contain % other than %s" ;;
+  esac
   # shellcheck disable=SC2016
-  printf 'r="$HOME/.local/share/%s/zgt-run"; if [ -x "$r" ]; then export ZGT_REQUIRED_PROTOCOL=%s; exec "$r" "$@"; fi; printf %s "$(uname -n)" >&2; exit 127' \
-    "$ZGT_NAME" "$protocol" "'$MSG_RUNNER_MISSING\n'"
+  printf 'sh -c '\''r="$HOME/.local/share/%s/zgt-run"; if [ -x "$r" ]; then export ZGT_REQUIRED_PROTOCOL=%s; exec "$r" %s; fi; printf "%s\\n" "$(uname -n)" >&2; exit 127'\''' \
+    "$ZGT_NAME" "$protocol" "$ZGT_ARGS_TOKEN" "$MSG_RUNNER_MISSING"
+}
+
+# zgt_loader のうち引数より前の部分 (tasks.json の中で管理タスクを見分けるのに使う)
+zgt_loader_prefix() {
+  local loader
+  loader="$(zgt_loader)" || return 1
+  printf '%s\n' "${loader%%"$ZGT_ARGS_TOKEN"*}"
 }
 
 # Zed の tasks.json (コメント・末尾カンマ可) を厳密な JSON に変換して標準出力へ出す

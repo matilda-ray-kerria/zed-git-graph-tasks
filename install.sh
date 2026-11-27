@@ -94,7 +94,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 zgt_render_block >"$tmp/block" || zgt_die "$(zgt_msg BUILD_FAILED)"
 expected="$("$ZGT_ROOT/build.sh" | jq 'length')"
-loader="$(zgt_loader)"
+loader_prefix="$(zgt_loader_prefix)" || exit 1
 
 created=0
 if [ ! -e "$tasks_file" ] || ! grep -q '[^[:space:]]' "$tasks_file"; then
@@ -120,7 +120,7 @@ fi
 # 書き込む前に、結果が読めることと管理タスクの数を確認する
 zgt_validate_jsonc "$tmp/new" || zgt_die "$(zgt_msg VERIFY_FAILED)"
 actual="$(zgt_jsonc_to_json "$tmp/new" |
-  jq --arg loader "$loader" '[.[] | select(.command == "sh" and .args[1] == $loader)] | length')"
+  jq --arg pre "$loader_prefix" '[.[] | select(.command | type == "string" and startswith($pre))] | length')"
 [ "$actual" = "$expected" ] || zgt_die "$(zgt_msg COUNT_MISMATCH "$expected" "$actual")"
 
 if [ "$dry_run" -eq 1 ]; then

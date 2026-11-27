@@ -41,8 +41,24 @@ if [ "$expand" -eq 0 ]; then
   exit 0
 fi
 
-# "command": "__ZGT_RUN__" を sh -c <起動スクリプト> zgt-run <args...> に置き換える
-jq -s --indent 2 --arg placeholder "$ZGT_PLACEHOLDER" --arg loader "$(zgt_loader)" '
-  add | map(if .command == $placeholder
-    then .command = "sh" | .args = ["-c", $loader, "zgt-run"] + (.args // [])
-    else . end)' "${files[@]}"
+# "command": "__ZGT_RUN__" のタスクを "command": "sh -c '<起動スクリプト>'" に置き換える。
+# Zed は args を引用符なしで利用者のシェルに渡すので、args は残さない (lib/common.sh の zgt_loader):
+#   - 記号を含まない語 (サブコマンド名や --confirm など) は起動スクリプトにそのまま書く
+#   - それ以外 (${ZED_...} や空白・記号を含むもの) は env の ZGT_ARG<n> に移し、
+#     起動スクリプトから "$ZGT_ARG<n>" で渡す
+loader="$(zgt_loader)" || exit 1
+jq -s --indent 2 --arg placeholder "$ZGT_PLACEHOLDER" --arg loader "$loader" \
+  --arg token "$ZGT_ARGS_TOKEN" '
+  add | map(if .command != $placeholder then . else
+    .label as $label
+    | (if (.env // {}) | keys | any(startswith("ZGT_ARG"))
+       then error("\($label): env must not define ZGT_ARG*") else . end)
+    | (reduce (.args // [])[] as $a ({words: [], env: {}, n: 0};
+        if ($a | type) != "string" then error("\($label): args must be strings")
+        elif ($a | test("^[A-Za-z0-9_.,:/@%+=-]+$")) then .words += [$a]
+        else .n += 1 | .env["ZGT_ARG\(.n)"] = $a | .words += ["\"$ZGT_ARG\(.n)\""]
+        end)) as $r
+    | .command = ($loader | split($token) | .[0] + ($r.words | join(" ")) + .[1])
+    | del(.args)
+    | if ($r.env | length) > 0 then .env = ((.env // {}) + $r.env) else . end
+  end)' "${files[@]}"
