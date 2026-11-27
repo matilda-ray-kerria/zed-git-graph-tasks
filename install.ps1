@@ -1,14 +1,14 @@
 # Adds the Git Graph custom commands to Zed's global tasks.json on Windows (run again to update).
-# The Windows counterpart of install.sh. The tasks run zgt-run with Git Bash (Git for Windows).
+# The Windows counterpart of install.sh. The tasks run "git zgt-run" with git (Git for Windows)
+# on PATH; the launcher is passed as a git alias in env (see lib\common.ps1).
 #
-#   powershell -ExecutionPolicy Bypass -File .\install.ps1 [-Lang en|ja] [-DryRun] [-Bash <bash.exe>]
+#   powershell -ExecutionPolicy Bypass -File .\install.ps1 [-Lang en|ja] [-DryRun]
 #
 # Runs on Windows PowerShell 5.1 and PowerShell 7. Keep this file ASCII-only (see lib\common.ps1).
 [CmdletBinding()]
 param(
   [string]$Lang,
   [switch]$DryRun,
-  [string]$Bash,
   [switch]$Help
 )
 
@@ -36,19 +36,18 @@ if ($Help) {
 }
 Assert-ZgtWindows
 
-# Git Bash: -Bash > the previous choice (if it still exists) > found automatically
-if ($Bash) {
-  $bashPath = Resolve-ZgtPath $Bash
-  if (-not (Test-Path -LiteralPath $bashPath -PathType Leaf)) { Stop-Zgt (Get-ZgtMessage BASH_NOT_FOUND_PS $Bash) }
-} else {
-  $bashPath = Get-ZgtState $state 'bash'
-  if (-not $bashPath -or -not (Test-Path -LiteralPath $bashPath -PathType Leaf)) { $bashPath = Find-ZgtBash }
-  if (-not $bashPath) { Stop-Zgt (Get-ZgtMessage NO_GIT_BASH_PS) }
+# Zed runs the tasks ("git zgt-run") from PowerShell / cmd, which find git through PATH.
+# git reads the alias from GIT_CONFIG_COUNT / GIT_CONFIG_KEY_0 / GIT_CONFIG_VALUE_0 since 2.31
+$git = Find-ZgtGit
+if (-not $git) { Stop-Zgt (Get-ZgtMessage NO_GIT_PS) }
+$gitVersion = Get-ZgtGitVersion $git
+if ($null -eq $gitVersion -or $gitVersion -lt $ZgtGitMinVersion) {
+  Stop-Zgt (Get-ZgtMessage GIT_TOO_OLD_PS $git ([string]$gitVersion) ([string]$ZgtGitMinVersion))
 }
 
-# bash takes the script path with forward slashes ($0 is split with dirname inside zgt-run)
+# zgt-run is given to bash with forward slashes ($0 is split with dirname inside zgt-run)
 $runnerArg = $runner.Replace('\', '/')
-$tasks = Get-ZgtTasks $bashPath $runnerArg
+$tasks = Get-ZgtTasks $runnerArg
 $expected = $tasks.Count
 $block = New-ZgtBlock $tasks
 
@@ -84,13 +83,11 @@ $newText = Join-ZgtLines $lines $newline
 
 # Before writing, check that the result can be read and holds all of our tasks
 if (-not (Test-ZgtJsonc $newText)) { Stop-Zgt (Get-ZgtMessage VERIFY_FAILED) }
-$actual = Measure-ZgtManaged $newText $bashPath $runnerArg
+$actual = Measure-ZgtManaged $newText $runnerArg
 if ($actual -ne $expected) { Stop-Zgt (Get-ZgtMessage COUNT_MISMATCH $expected $actual) }
 
 if ($DryRun) {
   Write-ZgtMessage DRYRUN_INSTALL $tasksFile
-  $git = Find-ZgtGit $bashPath
-  if (-not $git) { Stop-Zgt (Get-ZgtMessage REQUIRE_CMD 'git') }
   $tmp = New-ZgtTempDir
   try {
     $newFile = Join-Path $tmp 'tasks.json'
@@ -107,10 +104,10 @@ if ($DryRun) {
 Copy-ZgtLf (Join-Path $ZgtRoot "lang\$Lang.sh") (Join-Path $installDir 'messages.sh')
 Copy-ZgtLf (Join-Path $ZgtRoot 'bin\zgt-run') $runner
 
-# state: whether tasks.json was created by the installer (uninstall may delete it), the language
-# and Git Bash. The same file as install.sh; bash= is used only by install.ps1 / uninstall.ps1
+# state: whether tasks.json was created by the installer (uninstall may delete it) and the language.
+# The same file as install.sh
 if (-not $created -and (Get-ZgtState $state 'created_tasks_json') -eq '1') { $created = $true }
-Write-ZgtText $state ("created_tasks_json={0}`nlang={1}`nbash={2}`n" -f [int]$created, $Lang, $bashPath)
+Write-ZgtText $state ("created_tasks_json={0}`nlang={1}`n" -f [int]$created, $Lang)
 
 if ($exists -and $text -ceq $newText) {
   Write-ZgtMessage UP_TO_DATE $expected $runner
@@ -126,7 +123,7 @@ Write-ZgtText $tasksFile $newText $bom
 Write-ZgtMessage INSTALLED $expected $tasksFile
 if ($backup) { Write-ZgtMessage BACKUP_AT $backup }
 Write-ZgtMessage RUNNER_AT $runner
-Write-ZgtMessage BASH_AT_PS $bashPath
+Write-ZgtMessage GIT_AT_PS $git
 Write-ZgtMessage LANG_AT_PS (Get-ZgtMessage LANG_NAME)
 Write-Host ''
 Write-ZgtMessage HOW_TO_USE

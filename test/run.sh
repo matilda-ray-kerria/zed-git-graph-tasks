@@ -41,7 +41,7 @@ check() { # check <説明> <コマンド...>
 }
 count_tasks() { zgt_jsonc_to_json "$TASKS" | jq 'length'; }
 # 管理ブロックのタスク (command が zgt-run の起動スクリプトのもの) の数
-LOADER_HEAD="sh -c 'r=\"\$HOME/.local/share/zed-git-graph-tasks/zgt-run\";"
+LOADER_HEAD="sh -c 'r=\$ZGT_RUNNER; "
 count_ours() {
   zgt_jsonc_to_json "$TASKS" |
     jq --arg h "$LOADER_HEAD" '[.[] | select(.command | startswith($h))] | length'
@@ -124,7 +124,7 @@ cp -R "$ROOT/build.sh" "$ROOT/lib" "$ROOT/lang" "$ROOT/bin" "$WORK/badroot/"
 printf '[{"label": "x", "command": "__ZGT_RUN__", "args": ["--message", "a b; $(c)", "--", "echo", "ok"]}]\n' \
   >"$WORK/badroot/tasks.d/10.json"
 check "記号の無い語は command にそのまま書き、空白や記号を含む引数は env で渡す" \
-  jq -e '.[0] | (.command | contains("exec \"$r\" --message \"$ZGT_ARG1\" -- echo ok;"))
+  jq -e '.[0] | (.command | contains("exec bash \"$r\" --message \"$ZGT_ARG1\" -- echo ok;"))
     and .env == {"ZGT_ARG1": "a b; $(c)"}' <<<"$("$WORK/badroot/build.sh" --expand)"
 printf '[{"label": "x", "command": "__ZGT_RUN__", "args": ["a", "${ZED_GIT_SHA}"], "env": {"ZGT_ARG1": "y"}}]\n' \
   >"$WORK/badroot/tasks.d/10.json"
@@ -237,6 +237,16 @@ check "スクリプトが使うキーはすべて言語ファイルにある" \
 # (.ps1 自体の動作はここではテストしない。Windows で確認する)
 check "PowerShell スクリプトは ASCII だけで書かれている" \
   test -z "$(LC_ALL=C grep -l '[^[:print:][:space:]]' "$ROOT"/*.ps1 "$ROOT"/lib/*.ps1)"
+# Windows 版 (lib/common.ps1) は bash 側と同じ取り決めでタスクを作る (ここでは動かせないので文字列で確かめる)
+plain_word='^[A-Za-z0-9_.,:/@%+=-]+$'
+check "Windows 版も同じ起動スクリプト (lib/launcher.sh) と @ARGS@ を使う" \
+  test -n "$(grep -F "'lib\\launcher.sh'" "$ROOT/lib/common.ps1")" \
+  -a -n "$(grep -Fx "\$ZgtArgsToken = '$ZGT_ARGS_TOKEN'" "$ROOT/lib/common.ps1")"
+check "Windows 版の command は git zgt-run (テストの windows_tasks と同じ)" \
+  test -n "$(grep -Fx "\$ZgtAlias = 'zgt-run'" "$ROOT/lib/common.ps1")" \
+  -a -n "$(grep -Fx "\$ZgtGitCommand = \"git \$ZgtAlias\"" "$ROOT/lib/common.ps1")"
+check "記号の無い語として起動スクリプトに書く範囲が build.sh / Windows 版 / テストで同じ" \
+  test "$(grep -lF "$plain_word" "$ROOT/build.sh" "$ROOT/lib/common.ps1" "$ROOT/test/run.sh" | wc -l | tr -d " ")" = 3
 out="$("$ROOT/install.sh" 2>&1)"
 check "--lang を付けなければ英語でインストールする" \
   test "$(zgt_state_get "$STATE" lang)" = en -a -n "$(grep 'Added' <<<"$out")"
@@ -683,6 +693,71 @@ check "uninstall --remote --dry-run では消さない" test -e "$REMOTE_DIR/zgt
 "$ROOT/uninstall.sh" --remote devbox >/dev/null
 check "uninstall --remote で接続先から取り除く" test ! -e "$REMOTE_DIR"
 check "uninstall --remote ではローカルのラッパーを残す" test -x "$RUNNER"
+
+echo "== Windows の形 (install.ps1 が作る git zgt-run) を同じ呼び出し方で確認"
+# install.ps1 (lib/common.ps1 の ConvertTo-ZgtWindowsTask) はここでは動かせないので、同じ形の
+# タスクを作って Zed と同じ呼び出し方で実行する。command は "git zgt-run" だけで、起動スクリプトは
+# env の GIT_CONFIG_COUNT / GIT_CONFIG_KEY_0 / GIT_CONFIG_VALUE_0 (git のエイリアス)、
+# zgt-run の場所は ZGT_RUNNER、値は ZGT_ARG<n> で渡す
+windows_tasks() { # windows_tasks <ZGT_RUNNER に入れるパス>
+  local launcher
+  launcher="$(ZGT_ROOT="$ROOT" && zgt_load_lang ja && zgt_launcher)" || return 1
+  "$ROOT/build.sh" | jq --arg launcher "$launcher" --arg token "$ZGT_ARGS_TOKEN" --arg runner "$1" '
+    map(if .command != "__ZGT_RUN__" then . else
+      (reduce (.args // [])[] as $a ({words: [], env: {}, n: 0};
+        if ($a | test("^[A-Za-z0-9_.,:/@%+=-]+$")) then .words += [$a]
+        else .n += 1 | .env["ZGT_ARG\(.n)"] = $a | .words += ["\"$ZGT_ARG\(.n)\""] end)) as $r
+      | .command = "git zgt-run" | del(.args)
+      | .env = ((.env // {}) + $r.env + {
+          GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "alias.zgt-run",
+          GIT_CONFIG_VALUE_0: ("!" + ($launcher | split($token) | .[0] + ($r.words | join(" ")) + .[1])),
+          ZGT_RUNNER: $runner})
+    end)'
+}
+git reset -q --hard "$base"
+git switch -q main
+LOCAL_TASKS="$TASKS"
+# %APPDATA%\Zed\zed-git-graph-tasks\ の代わり (ユーザー名に空白があっても動くように、空白を含める)
+WIN_DIR="$WORK/App Data/Zed/zed-git-graph-tasks"
+mkdir -p "$WIN_DIR"
+cp "$ROOT/bin/zgt-run" "$WIN_DIR/zgt-run" # Windows と同じく実行権限は付けない
+cp "$ROOT/lang/ja.sh" "$WIN_DIR/messages.sh"
+TASKS="$WORK/win-tasks.json"
+windows_tasks "$WIN_DIR/zgt-run" >"$TASKS"
+check "command は git zgt-run だけ (パス・引用符・値を含まない)" \
+  jq -e 'all(.[]; .command == "git zgt-run" and (has("args") | not))' "$TASKS"
+REF="" SHA="$base"
+for s in zsh bash dash; do
+  command -v "$s" >/dev/null 2>&1 || continue
+  out="$(TEST_SHELL="$(command -v "$s")" run_task "$CONTINUE" "" 2>&1)"
+  check "$s から git のエイリアス経由で zgt-run (空白を含むパス) が動く" \
+    grep -q '途中で止まっている merge / rebase / cherry-pick / revert はありません' <<<"$out"
+done
+REF=feature SHA="$(git rev-parse feature)"
+run_task "$CHECKOUT" 1 >/dev/null 2>&1
+check "ZGT_ARG1 / ZGT_ARG2 (コミットと ref) が渡り、チェックアウトできる" test "$(cur)" = feature
+git switch -q main
+git branch "$evil" main
+REF="$evil" SHA="$(git rev-parse main)"
+out="$(run_task "$CHECKOUT" "" 2>&1)"
+check "記号を含む ref 名もシェルに解釈されずに渡る" \
+  test ! -e PWNED1 -a ! -e PWNED2 -a ! -e PWNED3 -a -n "$(grep -F "$evil" <<<"$out")"
+git branch -q -D "$evil"
+
+# Windows の Zed から SSH 接続した場合: ZGT_RUNNER (Windows のパス) は接続先に無いので、
+# 接続先の ~/.local/share/zed-git-graph-tasks/zgt-run を使う
+windows_tasks "C:/Users/someone/AppData/Roaming/Zed/zed-git-graph-tasks/zgt-run" >"$TASKS"
+"$ROOT/install.sh" --remote devbox >/dev/null
+REF="" SHA="$base"
+out="$(VIA_SSH=devbox run_task "$CONTINUE" "" 2>&1)"
+check "ZGT_RUNNER が無いホスト (SSH 接続先) では ~/.local/share の zgt-run を使う" \
+  grep -q '途中で止まっている merge / rebase / cherry-pick / revert はありません' <<<"$out"
+out="$(FAKE_REMOTE_HOME="$WORK/empty-home" VIA_SSH=devbox run_task "$CONTINUE" "" 2>&1)"
+check "どちらにも zgt-run が無ければ入れ方を表示する (exit 127)" \
+  test "$(FAKE_REMOTE_HOME="$WORK/empty-home" VIA_SSH=devbox run_task "$CONTINUE" "" >/dev/null 2>&1
+    echo $?)" = 127 -a -n "$(grep -F 'には zgt-run がありません' <<<"$out")"
+"$ROOT/uninstall.sh" --remote devbox >/dev/null
+TASKS="$LOCAL_TASKS"
 
 echo "== 英語の表示"
 git reset -q --hard "$base"

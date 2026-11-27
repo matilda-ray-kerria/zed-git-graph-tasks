@@ -69,10 +69,10 @@ Zed の SSH リモート開発では、タスクの定義はローカル（Zed �
 - 表示の言語は `--lang` で選ぶ。指定しなければローカルで選んだ言語
 - このリポジトリを更新したら、ローカルと一緒に接続先も `--remote` で入れ直す。`tasks.json` が求める版より接続先の `zgt-run` が古いと、タスクの実行時に更新するよう表示する
 - 接続先に `zgt-run` が無いままタスクを選ぶと、「このホストには zgt-run がありません」と入れ方を表示する
-- `tasks.json` のタスクは `"command": "sh -c '<起動スクリプト>'"` の形にしてある。起動スクリプトは、タスクを実行したマシンの `$HOME/.local/share/zed-git-graph-tasks/zgt-run` を探して起動する
+- `tasks.json` のタスクは `"command": "sh -c '<起動スクリプト>'"` の形にしてある。起動スクリプト（`lib/launcher.sh`。Windows 版と共通）は、タスクを実行したマシンの `$HOME/.local/share/zed-git-graph-tasks/zgt-run` を探して起動する
 - Zed はタスクの command と args を引用符で囲まずに空白でつなぎ、利用者のシェル（SSH 接続先では接続先のシェル）に `-i -c` で渡す（Zed の `prepare_task_for_spawn`）。そのため command は `sh -c '...'` の 1 語だけにし、`${ZED_GIT_SHA}` などの値は `env` の `ZGT_ARG1`、`ZGT_ARG2`… で渡して、起動スクリプトの中で `"$ZGT_ARG1"` として `zgt-run` に渡している。利用者のシェルが zsh でも bash でも同じように動き（テストでは zsh / bash / dash で確認）、ref 名に含まれる `;` や `$(...)`（git はこれらを ref 名に使える）がシェルに実行されることもない
 - `--remote` が使う ssh コマンドは環境変数 `ZGT_SSH` で変えられる（主にテスト用）
-- Windows の Zed から SSH 接続した場合は、まだ対応していない（[Windows](#windows) の「macOS / Linux 版との違い」を参照）
+- Windows の Zed から SSH 接続した場合も同じように動く。接続先への配置は Git Bash から `./install.sh --remote <接続先>` を実行する（Git for Windows に ssh と tar が入っている）。Windows で選んだ言語は引き継がないので、日本語にするなら `--lang ja` を付ける。接続先の git は 2.31 以上が必要（[Windows](#windows) の「macOS / Linux 版との違い」を参照）
 
 ### 表示の言語
 
@@ -108,12 +108,12 @@ Zed の SSH リモート開発では、タスクの定義はローカル（Zed �
 
 ## Windows
 
-`install.ps1` / `uninstall.ps1` を使う。タスクは Git for Windows の Git Bash で `zgt-run` を動かすので、メニューの動きは macOS / Linux と同じ。
+`install.ps1` / `uninstall.ps1` を使う。タスクは Git for Windows の git と bash で `zgt-run` を動かすので、メニューの動きは macOS / Linux と同じ。
 
 ### 必要なもの
 
 - Zed（Windows 版。Git Graph の Custom Commands に対応した版）
-- [Git for Windows](https://git-scm.com/install/windows)（Git 2.30 以降）。同梱の `bin\bash.exe` で `zgt-run` を動かす。`winget install --id Git.Git -e` でも入る
+- [Git for Windows](https://git-scm.com/install/windows)（Git 2.31 以降）。`git` が `PATH` にあること（インストーラーの既定のまま入れればよい）。`winget install --id Git.Git -e` でも入る。`install.ps1` が確認し、無い・古い場合は止まる
 - Windows PowerShell 5.1（Windows に標準で入っている）か PowerShell 7
 - jq は要らない
 - fzf（任意。`winget install fzf` などで入れる。Zed のタスクから見える `PATH` にある必要がある）
@@ -137,29 +137,34 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Purge   # バックア
 ### macOS / Linux 版との違い
 
 - 設定ディレクトリは `%APPDATA%\Zed`（Zed の `paths::config_dir()` と同じ）。`--user-data-dir` を付けて Zed を起動しているなど場所が違う場合は、`$env:ZED_CONFIG_DIR = '<パス>'` を設定してから実行する
-- Windows の Zed はタスクを PowerShell から起動するので、bash スクリプトの `zgt-run` を直接は実行できない。そのため `command` を Git Bash の `bash.exe` にし、`args` の先頭に `zgt-run` のパスを入れる
+- タスクの `command` は `git zgt-run` だけにし、起動スクリプト（`lib/launcher.sh`）は `env` の `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` で git のエイリアス `zgt-run` として渡す。git（2.31 以降）はこの環境変数を設定として読み、`!` で始まるエイリアスを Git for Windows 同梱の sh で実行する。起動スクリプトは `/usr/bin`（Git の `usr\bin`）を `PATH` の先頭に足し、同じ Git の bash で `zgt-run` を実行する
 
   ```jsonc
   {
     "label": "Checkout…",
-    "command": "C:\\Program Files\\Git\\bin\\bash.exe",
-    "args": [
-      "C:/Users/<ユーザー>/AppData/Roaming/Zed/zed-git-graph-tasks/zgt-run",
-      "checkout",
-      "${ZED_GIT_SHA}",
-      "${ZED_GIT_REF:@}"
-    ],
+    "command": "git zgt-run",
+    "env": {
+      "ZGT_ARG1": "${ZED_GIT_SHA}",
+      "ZGT_ARG2": "${ZED_GIT_REF:@}",
+      "GIT_CONFIG_COUNT": "1",
+      "GIT_CONFIG_KEY_0": "alias.zgt-run",
+      "GIT_CONFIG_VALUE_0": "!r=$ZGT_RUNNER; ... exec bash \"$r\" checkout \"$ZGT_ARG1\" \"$ZGT_ARG2\"; ...",
+      "ZGT_RUNNER": "C:/Users/<ユーザー>/AppData/Roaming/Zed/zed-git-graph-tasks/zgt-run"
+    },
     ...
   }
   ```
 
-- 使う `bash.exe` は、`-Bash` で指定したもの → 前回使ったもの → 自動で探したもの、の順に決まる。自動では `GIT_INSTALL_ROOT`、`PATH` 上の `git.exe` の場所、Program Files / `%LOCALAPPDATA%\Programs` / scoop の Git から `bin\bash.exe` を探す。`PATH` 上の `bash` は使わない（`C:\Windows\System32\bash.exe` は WSL を起動するもののため）。Git を入れ直して場所が変わったら `install.ps1` を再実行する
+- こうしているのは、Windows の Zed がタスクを次のように起動するため。`command` に `C:\Program Files\Git\bin\bash.exe` のようなパスや引用符、ref の値を書くと、どこかで分かれたり解釈されたりする
+  - command と args を引用符なしで空白でつなぎ、PowerShell（見つからなければ cmd）に `-C` で渡す（Zed の `prepare_task_for_spawn`）。PowerShell と cmd では引用符や記号の扱いが違い、`${ZED_GIT_REF:@}` の既定値 `@` も PowerShell では特別な記号になる
+  - Zed のターミナル（alacritty）は、起動するプログラムのパスを引用符なしで Windows のコマンドラインに書く（`tty/windows` の `cmdline`）。タスクの `shell` に `bash.exe` を指定しても、パスに空白があると分かれてしまう
+  - `git zgt-run` なら PowerShell でも cmd でも同じ意味になり、値やパスはどのシェルも解釈しない `env` で渡る
+- `zgt-run` と `messages.sh` は `%APPDATA%\Zed\zed-git-graph-tasks\` に置き、`env` の `ZGT_RUNNER` で場所を渡す。SSH 接続先では `ZGT_RUNNER` のパスが無いので、起動スクリプトは接続先の `~/.local/share/zed-git-graph-tasks/zgt-run` を使う。そのため Windows の Zed から SSH で接続したプロジェクトでも動く（接続先に `zgt-run` を置き、git 2.31 以上があること。[SSH 接続先で使う](#ssh-接続先で使う) を参照）
 - `zgt-run` と `messages.sh` は改行を LF にして置く。Windows で clone すると `core.autocrlf` で CRLF になることがあり、bash が `$'\r': command not found` で止まるため。リポジトリ側も `.gitattributes` で LF に固定している
 - `tasks.json` の改行コード（CRLF / LF）と BOM の有無は元のまま保つ
-- `state` には使った `bash.exe` のパス（`bash=`）も保存する
 - `-DryRun` の差分は `git diff --no-index` で表示する
 - 管理ブロックの目印は macOS / Linux 版と同じ。目印の後ろの説明文だけ「install.ps1 が管理」になる
-- `zgt-run` と `messages.sh` は `%APPDATA%\Zed\zed-git-graph-tasks\` に置き、`tasks.json` からはその絶対パスで呼ぶ。そのため、Windows の Zed から SSH で接続したプロジェクトでは、接続先に `bash.exe` も `zgt-run` も無く実行できない（[SSH 接続先で使う](#ssh-接続先で使う) の仕組みにはまだ対応していない）
+- 以前の版は `command` に Git Bash の `bash.exe` のパスを書き、`-Bash` オプションで場所を指定できた。今の版では bash.exe のパスを使わないので、`-Bash` は無くなった。`install.ps1` を実行し直せば新しい形に置き換わる
 
 ## タスクを追加・変更する
 
@@ -179,8 +184,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -Purge   # バックア
 ```
 
 - `"tags": ["git-command"]` が無いと Git Graph のメニューに出ない
-- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` を起動する形に置き換わる（macOS / Linux では `"command": "sh -c '<起動スクリプト>'"` になり、`args` は無くなる。Windows では Git Bash の `bash.exe <zgt-run のパス> <args...>`）
-  - macOS / Linux では、`args` のうち記号を含まない語（サブコマンド名、`--confirm`、`git` など）は起動スクリプトにそのまま入る。それ以外（`${ZED_...}` や空白・記号を含む引数）は `env` の `ZGT_ARG<n>` で渡す（[SSH 接続先で使う](#ssh-接続先で使う) の仕組みを参照）。そのため断片ファイルの `env` には `ZGT_ARG` で始まる名前を使えない
+- `"command": "__ZGT_RUN__"` は、インストール時に `zgt-run` を起動する形に置き換わり、`args` は無くなる（macOS / Linux では `"command": "sh -c '<起動スクリプト>'"`、Windows では `"command": "git zgt-run"`）
+  - `args` のうち記号を含まない語（サブコマンド名、`--confirm`、`git` など）は起動スクリプトにそのまま入る。それ以外（`${ZED_...}` や空白・記号を含む引数）は `env` の `ZGT_ARG<n>` で渡す（[SSH 接続先で使う](#ssh-接続先で使う) の仕組みを参照）。そのため断片ファイルの `env` には `ZGT_` と `GIT_CONFIG_` で始まる名前を使えない
 - 組み込みの操作や引数を変えて、古い `zgt-run` では動かなくなる場合は、`bin/zgt-run` の `ZGT_PROTOCOL` を 1 つ上げる。SSH 接続先の `zgt-run` が古いままだと、実行時に更新するよう表示される
 - 変数は必ず `${ZED_GIT_REF}` のように `{}` で囲む。Zed の変数展開は日本語の文字も変数名の一部とみなすので、`$ZED_GIT_REFを` と書くと展開に失敗し、メニューに出なくなる
 - 使える変数は `ZED_GIT_SHA` / `ZED_GIT_SHA_SHORT` / `ZED_GIT_REPOSITORY_NAME` / `ZED_GIT_REPOSITORY_PATH` / `ZED_GIT_REF`（[Zed Docs: Custom Git Commands](https://zed.dev/docs/tasks#custom-git-commands)）
@@ -226,9 +231,14 @@ zgt-run [--confirm | --danger] [--message <文>] [--note <文>] [--require <操�
 
 一時ディレクトリだけを使うので、実際の Zed の設定や Git の設定には触れない。
 
-`install.ps1` / `uninstall.ps1` の動作はテストしていない（Windows で確認する）。
-`test/run.sh` では、PowerShell スクリプトが使う文言のキーが言語ファイルにあることと、
-スクリプトが ASCII だけで書かれていること（Windows PowerShell 5.1 は BOM の無いスクリプトを ANSI として読むため）だけを検査する。
+タスクは Zed と同じ呼び出し方で実行する。command と args を引用符なしでつないでシェル（既定は zsh。bash / dash / sh でも確認する）の `-i -c` に渡し、SSH 接続先の場合は `cd … && exec env K=V … <シェル> -i -c '…'` を偽の ssh に渡す。
+
+`install.ps1` / `uninstall.ps1` そのものは動かしていない（Windows で確認する）。`test/run.sh` では次のことを確認する。
+
+- Windows 版と同じ形のタスク（`git zgt-run` と `env` の git エイリアス）を jq で作り、Linux 上で同じ呼び出し方で実行する。空白を含むパスの `zgt-run`、記号を含む ref 名、SSH 接続先で `~/.local/share` に切り替わることを含む
+- Windows 版が同じ取り決め（`lib/launcher.sh`、`@ARGS@`、エイリアス名、記号を含まない語の範囲）を使っていること
+- PowerShell スクリプトが使う文言のキーが言語ファイルにあること
+- スクリプトが ASCII だけで書かれていること（Windows PowerShell 5.1 は BOM の無いスクリプトを ANSI として読むため）
 
 ## 構成
 
@@ -240,6 +250,7 @@ tasks.d/                    タスクの断片ファイル
 bin/zgt-run                 確認付きの実行ラッパー
 lang/en.sh / lang/ja.sh     表示の文言 (キーと %s / %d の数・順番を揃える。テストで検査)
 lib/common.sh               共通処理 (tasks.json の解析と差し込み)
+lib/launcher.sh             tasks.json から zgt-run を起動するスクリプトのひな形 (macOS / Linux / Windows 共通)
 lib/common.ps1              Windows 用の共通処理 (common.sh と build.sh の処理を PowerShell に移したもの)
 test/run.sh                 テスト
 .gitattributes              bash が読むファイルの改行を LF に固定する

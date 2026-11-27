@@ -51,8 +51,8 @@ jq -s --indent 2 --arg placeholder "$ZGT_PLACEHOLDER" --arg loader "$loader" \
   --arg token "$ZGT_ARGS_TOKEN" '
   add | map(if .command != $placeholder then . else
     .label as $label
-    | (if (.env // {}) | keys | any(startswith("ZGT_ARG"))
-       then error("\($label): env must not define ZGT_ARG*") else . end)
+    | (if (.env // {}) | keys | any(test("^(ZGT_|GIT_CONFIG_)"; "i"))
+       then error("\($label): env must not define ZGT_* or GIT_CONFIG_* (used by the launcher)") else . end)
     | (reduce (.args // [])[] as $a ({words: [], env: {}, n: 0};
         if ($a | type) != "string" then error("\($label): args must be strings")
         elif ($a | test("^[A-Za-z0-9_.,:/@%+=-]+$")) then .words += [$a]

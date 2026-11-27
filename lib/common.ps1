@@ -9,6 +9,13 @@ $ZgtName = 'zed-git-graph-tasks'
 $ZgtBegin = "// >>> $ZgtName"
 $ZgtEnd = "// <<< $ZgtName"
 $ZgtPlaceholder = '__ZGT_RUN__'
+# The tasks run "git zgt-run": the alias is passed in env (see ConvertTo-ZgtWindowsTask)
+$ZgtAlias = 'zgt-run'
+$ZgtGitCommand = "git $ZgtAlias"
+# git reads GIT_CONFIG_COUNT / GIT_CONFIG_KEY_<n> / GIT_CONFIG_VALUE_<n> since 2.31
+$ZgtGitMinVersion = [version]'2.31'
+# Where lib/launcher.sh takes the arguments for zgt-run (ZGT_ARGS_TOKEN in lib/common.sh)
+$ZgtArgsToken = '@ARGS@'
 $ZgtUtf8 = New-Object System.Text.UTF8Encoding $false
 $ZgtIndentChars = [char[]]@([char]' ', [char]"`t")
 # Messages from lang/<lang>.sh, keyed without the MSG_ prefix (filled by Import-ZgtLang)
@@ -147,46 +154,22 @@ function Get-ZgtConfigDir {
   return (Join-Path $appData 'Zed')
 }
 
-# bash.exe of Git for Windows, which runs zgt-run. Returns $null if it is not found.
-# "bash" on PATH is never used: C:\Windows\System32\bash.exe is the WSL launcher.
-# <Git>\bin\bash.exe (not usr\bin\bash.exe) sets up PATH so that git and coreutils are found.
-function Find-ZgtBash {
-  $candidates = New-Object 'System.Collections.Generic.List[string]'
-  if ($env:GIT_INSTALL_ROOT) { $candidates.Add((Join-Path $env:GIT_INSTALL_ROOT 'bin\bash.exe')) }
-  # From git.exe on PATH: <Git>\cmd\git.exe, <Git>\bin\git.exe or <Git>\mingw64\bin\git.exe
-  foreach ($git in @(Get-Command git.exe -CommandType Application -All -ErrorAction SilentlyContinue)) {
-    $dir = Split-Path -Parent $git.Path
-    for ($level = 0; $level -lt 3 -and $dir; $level++) {
-      $candidates.Add((Join-Path $dir 'bin\bash.exe'))
-      $dir = Split-Path -Parent $dir
-    }
-  }
-  foreach ($root in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-    if ($root) { $candidates.Add((Join-Path $root 'Git\bin\bash.exe')) }
-  }
-  if ($env:LOCALAPPDATA) { $candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\Git\bin\bash.exe')) }
-  $scoop = $env:SCOOP
-  if (-not $scoop -and $env:USERPROFILE) { $scoop = Join-Path $env:USERPROFILE 'scoop' }
-  if ($scoop) { $candidates.Add((Join-Path $scoop 'apps\git\current\bin\bash.exe')) }
-
-  foreach ($c in $candidates) {
-    if ($env:SystemRoot -and $c.StartsWith($env:SystemRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-      continue
-    }
-    if (Test-Path -LiteralPath $c -PathType Leaf) { return [System.IO.Path]::GetFullPath($c) }
-  }
+# git.exe on PATH, or $null. Zed runs the tasks ("git zgt-run") from PowerShell / cmd, which find
+# git through PATH; git runs the alias with the sh of the same Git for Windows (no bash.exe path needed)
+function Find-ZgtGit {
+  $cmd = @(Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue)
+  if ($cmd.Count -gt 0) { return $cmd[0].Path }
   return $null
 }
 
-# git.exe for showing diffs: the one on PATH, or the one next to Git Bash
-function Find-ZgtGit([string]$Bash) {
-  $cmd = @(Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue)
-  if ($cmd.Count -gt 0) { return $cmd[0].Path }
-  if (-not $Bash) { $Bash = Find-ZgtBash }
-  if ($Bash) {
-    $git = Join-Path (Split-Path -Parent $Bash) 'git.exe'
-    if (Test-Path -LiteralPath $git -PathType Leaf) { return $git }
+# The version of git ("git version 2.45.1.windows.1" -> 2.45), or $null if it cannot be read
+function Get-ZgtGitVersion([string]$Git) {
+  try {
+    $out = (& $Git --version 2>$null | Out-String)
+  } catch {
+    return $null
   }
+  if ($out -match '(\d+)\.(\d+)') { return [version]('{0}.{1}' -f $Matches[1], $Matches[2]) }
   return $null
 }
 
@@ -381,14 +364,13 @@ function Get-ZgtJsonProp($Object, [string]$Name) {
   return $null
 }
 
-# The number of tasks in tasks.json text that run zgt-run with Git Bash
-function Measure-ZgtManaged([string]$Text, [string]$Bash, [string]$Runner) {
+# The number of tasks in tasks.json text that run zgt-run ("git zgt-run" with our zgt-run in env)
+function Measure-ZgtManaged([string]$Text, [string]$Runner) {
   $count = 0
   foreach ($e in (ConvertFrom-ZgtJsonArray (ConvertFrom-ZgtJsonc $Text))) {
-    $cmd = Get-ZgtJsonProp $e 'command'
-    $taskArgs = Get-ZgtJsonProp $e 'args'
-    if ($cmd -is [string] -and $cmd -eq $Bash -and $taskArgs -is [array] -and
-      $taskArgs.Count -gt 0 -and $taskArgs[0] -ceq $Runner) {
+    $taskEnv = Get-ZgtJsonProp $e 'env'
+    if ((Get-ZgtJsonProp $e 'command') -ceq $ZgtGitCommand -and
+      (Get-ZgtJsonProp $taskEnv 'ZGT_RUNNER') -ceq $Runner) {
       $count++
     }
   }
@@ -449,30 +431,81 @@ function ConvertTo-ZgtJson($Value, [int]$Level) {
   return [System.Convert]::ToString($Value, [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
-# A task of tasks.d for Windows. Tasks with "command": "__ZGT_RUN__" run zgt-run with Git Bash:
-#   "command": <bash.exe>, "args": [<zgt-run>, <the original args>...]
-function ConvertTo-ZgtWindowsTask($Task, [string]$Bash, [string]$Runner) {
-  $ours = (Get-ZgtJsonProp $Task 'command') -ceq $ZgtPlaceholder
-  $hasArgs = $false
-  foreach ($p in $Task.PSObject.Properties) {
-    if ($p.Name -ceq 'args') { $hasArgs = $true }
+# The protocol version of zgt-run (the ZGT_PROTOCOL=<n> line of bin/zgt-run)
+function Get-ZgtProtocol {
+  $m = [regex]::Match((Read-ZgtText (Join-Path $ZgtRoot 'bin\zgt-run')), '(?m)^ZGT_PROTOCOL=(\d+)\r?$')
+  if (-not $m.Success) { Stop-Zgt 'ZGT_PROTOCOL not found in bin/zgt-run' }
+  return $m.Groups[1].Value
+}
+
+# The sh script that starts zgt-run: lib/launcher.sh filled with the message language and the
+# protocol version (zgt_launcher in lib/common.sh does the same). $ZgtArgsToken is left in place
+function Get-ZgtLauncher {
+  $msg = [string]$ZgtMsg['RUNNER_MISSING']
+  # The message goes into "..." and is used as a printf format
+  if ($msg -match '[''"$`\\]') { Stop-Zgt 'MSG_RUNNER_MISSING must not contain '' " $ ` \' }
+  if ($msg.Replace('%s', '').Contains('%')) { Stop-Zgt 'MSG_RUNNER_MISSING must not contain % other than %s' }
+  $text = (Read-ZgtText (Join-Path $ZgtRoot 'lib\launcher.sh')).Replace("`r`n", "`n")
+  $lines = @($text.Split([char]"`n") | Where-Object { -not $_.StartsWith('#') -and $_ -match '\S' })
+  if ($lines.Count -ne 1 -or -not $lines[0].Contains($ZgtArgsToken) -or $lines[0].Contains("'")) {
+    Stop-Zgt "lib/launcher.sh: the script must be one line without ' and with $ZgtArgsToken"
   }
+  return $lines[0].Replace('@NAME@', $ZgtName).Replace('@PROTOCOL@', (Get-ZgtProtocol)).Replace('@MSG@', $msg)
+}
+
+# A task of tasks.d for Windows. Tasks with "command": "__ZGT_RUN__" become "command": "git zgt-run".
+# Zed joins command and args without quoting and hands the result to PowerShell (or cmd), and its
+# terminal writes the program path unquoted into the Windows command line. So the command holds no
+# path, quote or value, and the rest goes to env, which no shell parses:
+#   - GIT_CONFIG_COUNT / GIT_CONFIG_KEY_0 / GIT_CONFIG_VALUE_0 define the alias zgt-run as
+#     "!<launcher>"; git runs it with the sh of Git for Windows
+#   - ZGT_RUNNER is zgt-run (the launcher falls back to ~/.local/share/... on SSH hosts)
+#   - args: plain words go into the launcher as is, the others (${ZED_...}, spaces, symbols) go to
+#     ZGT_ARG<n> and the launcher passes "$ZGT_ARG<n>" (build.sh does the same on macOS / Linux)
+function ConvertTo-ZgtWindowsTask($Task, [string]$Launcher, [string]$Runner) {
   $result = [ordered]@{}
-  foreach ($p in $Task.PSObject.Properties) {
-    if ($ours -and $p.Name -ceq 'command') {
-      $result['command'] = $Bash
-      if (-not $hasArgs) { $result['args'] = @($Runner) }
-    } elseif ($ours -and $p.Name -ceq 'args') {
-      $result['args'] = @($Runner) + @($p.Value)
-    } else {
-      $result[$p.Name] = $p.Value
+  if ((Get-ZgtJsonProp $Task 'command') -cne $ZgtPlaceholder) {
+    foreach ($p in $Task.PSObject.Properties) { $result[$p.Name] = $p.Value }
+    return $result
+  }
+  $label = Get-ZgtJsonProp $Task 'label'
+  $taskEnv = [ordered]@{}
+  $given = Get-ZgtJsonProp $Task 'env'
+  if ($null -ne $given) {
+    if (-not ($given -is [System.Management.Automation.PSCustomObject])) { Stop-Zgt "${label}: env must be an object" }
+    foreach ($p in $given.PSObject.Properties) {
+      if ($p.Name -match '^(ZGT_|GIT_CONFIG_)') { Stop-Zgt "${label}: env must not define $($p.Name)" }
+      $taskEnv[$p.Name] = $p.Value
     }
   }
+  $words = New-Object 'System.Collections.Generic.List[string]'
+  $n = 0
+  foreach ($a in (Get-ZgtJsonProp $Task 'args')) {
+    if (-not ($a -is [string])) { Stop-Zgt "${label}: args must be strings" }
+    if ($a -cmatch '^[A-Za-z0-9_.,:/@%+=-]+$') {
+      $words.Add($a)
+    } else {
+      $n++
+      $taskEnv["ZGT_ARG$n"] = $a
+      $words.Add('"$ZGT_ARG' + $n + '"')
+    }
+  }
+  $taskEnv['GIT_CONFIG_COUNT'] = '1'
+  $taskEnv['GIT_CONFIG_KEY_0'] = "alias.$ZgtAlias"
+  $taskEnv['GIT_CONFIG_VALUE_0'] = '!' + $Launcher.Replace($ZgtArgsToken, ($words -join ' '))
+  $taskEnv['ZGT_RUNNER'] = $Runner
+  foreach ($p in $Task.PSObject.Properties) {
+    if ($p.Name -ceq 'command') { $result['command'] = $ZgtGitCommand }
+    elseif ($p.Name -cne 'args' -and $p.Name -cne 'env') { $result[$p.Name] = $p.Value }
+  }
+  $result['env'] = $taskEnv
   return $result
 }
 
-# Combine tasks.d/*.json in name order and convert them for Windows (build.sh for install.ps1)
-function Get-ZgtTasks([string]$Bash, [string]$Runner) {
+# Combine tasks.d/*.json in name order and convert them for Windows (build.sh for install.ps1).
+# $Runner is zgt-run with forward slashes ($0 is split with dirname inside zgt-run)
+function Get-ZgtTasks([string]$Runner) {
+  $launcher = Get-ZgtLauncher
   $files = @(Get-ChildItem -LiteralPath (Join-Path $ZgtRoot 'tasks.d') -File |
       Where-Object { $_.Extension -eq '.json' } | Sort-Object Name)
   if ($files.Count -eq 0) { Stop-Zgt (Get-ZgtMessage NO_FRAGMENTS) }
@@ -486,7 +519,7 @@ function Get-ZgtTasks([string]$Bash, [string]$Runner) {
         Stop-Zgt (Get-ZgtMessage BAD_FRAGMENT $f.FullName)
       }
     }
-    foreach ($e in $arr) { $tasks.Add((ConvertTo-ZgtWindowsTask $e $Bash $Runner)) }
+    foreach ($e in $arr) { $tasks.Add((ConvertTo-ZgtWindowsTask $e $launcher $Runner)) }
   }
   return , $tasks
 }

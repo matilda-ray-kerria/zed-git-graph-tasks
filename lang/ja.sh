@@ -175,24 +175,23 @@ Zed のグローバル tasks.json から管理ブロックだけを取り除き�
 # lib/common.ps1 が独自に読む (bash もこのファイルを読み込む)。値は "..." か '...' で書き、
 # $ や \ を含む文は単一引用符で囲む
 MSG_WINDOWS_ONLY_PS="install.ps1 / uninstall.ps1 は Windows 用です。macOS / Linux では ./install.sh / ./uninstall.sh を使ってください"
-MSG_NO_GIT_BASH_PS='Git Bash (Git for Windows の bin\bash.exe) が見つかりません。Git for Windows を入れる (winget install --id Git.Git -e) か、-Bash でパスを指定してください'
-MSG_BASH_NOT_FOUND_PS="見つかりません: %s (-Bash には Git for Windows の bash.exe のパスを指定してください)"
-MSG_BASH_AT_PS="  Git Bash:     %s"
+MSG_NO_GIT_PS='PATH 上に git が見つかりません。タスクは "git zgt-run" として実行されるので、Git for Windows を入れ (winget install --id Git.Git -e)、git を PATH に通してから (インストーラーの既定) もう一度実行してください'
+MSG_GIT_TOO_OLD_PS="PATH 上の git が古すぎます: %s (バージョン %s)。タスクの実行には git %s 以上が必要です。Git for Windows を更新してください (winget upgrade --id Git.Git -e)"
+MSG_GIT_AT_PS="  git:          %s"
 MSG_BLOCK_NOTE_PS="(install.ps1 が管理。このブロック内は編集しないでください)"
 MSG_LANG_AT_PS='  言語:         %s (変更するには .\install.ps1 -Lang en|ja)'
 MSG_WILL_DELETE_PS="%s を削除します (install.ps1 が作成したファイルのため)"
 MSG_DELETED_PS="✓ %s を削除しました (install.ps1 が作成したファイルのため)"
 MSG_PURGE_HINT_PS='  (バックアップを消すには .\uninstall.ps1 -Purge)'
 
-MSG_INSTALL_USAGE_PS='使い方: .\install.ps1 [-Lang en|ja] [-DryRun] [-Bash PATH]
+MSG_INSTALL_USAGE_PS='使い方: .\install.ps1 [-Lang en|ja] [-DryRun]
 
 tasks.d\*.json を結合し、Zed のグローバル tasks.json に管理ブロックとして追加します。
 既に追加済みならブロックを最新の内容に差し替えます。既存のタスクやコメントには触れません。
-タスクは Git Bash で zgt-run を実行します。
+タスクは git (PATH 上の Git for Windows 2.31 以上) を通して zgt-run を実行します。
 
   -Lang en|ja  表示の言語 (既定: 前回選んだ言語。初回は en)
   -DryRun      書き換えずに差分だけ表示する
-  -Bash PATH   Git for Windows の bash.exe (既定: 前回使ったもの。無ければ自動で探す)
 
 環境変数:
   ZED_CONFIG_DIR  Zed の設定ディレクトリ (既定: $env:APPDATA\Zed)'

@@ -177,24 +177,24 @@ Environment:
 # lib/common.ps1 reads these with its own parser (bash also sources this file): write each value
 # as "..." or '...', and use single quotes for text that contains $ or \.
 MSG_WINDOWS_ONLY_PS="install.ps1 / uninstall.ps1 are for Windows. On macOS / Linux, use ./install.sh / ./uninstall.sh"
-MSG_NO_GIT_BASH_PS='Git Bash (bin\bash.exe of Git for Windows) was not found. Install Git for Windows (winget install --id Git.Git -e), or pass the path with -Bash'
-MSG_BASH_NOT_FOUND_PS="Not found: %s (pass the path to bash.exe of Git for Windows with -Bash)"
-MSG_BASH_AT_PS="  Git Bash: %s"
+MSG_NO_GIT_PS='git was not found on PATH. The tasks run "git zgt-run", so install Git for Windows (winget install --id Git.Git -e) with git on PATH (the installer default), then run this again'
+MSG_GIT_TOO_OLD_PS="git on PATH is too old: %s (version %s). The tasks need git %s or later. Update Git for Windows (winget upgrade --id Git.Git -e)"
+MSG_GIT_AT_PS="  git:      %s"
 MSG_BLOCK_NOTE_PS="(managed by install.ps1; do not edit inside this block)"
 MSG_LANG_AT_PS='  Language: %s (to change: .\install.ps1 -Lang en|ja)'
 MSG_WILL_DELETE_PS="Will delete %s (it was created by install.ps1)"
 MSG_DELETED_PS="✓ Deleted %s (it was created by install.ps1)"
 MSG_PURGE_HINT_PS='  (to delete the backups: .\uninstall.ps1 -Purge)'
 
-MSG_INSTALL_USAGE_PS='Usage: .\install.ps1 [-Lang en|ja] [-DryRun] [-Bash PATH]
+MSG_INSTALL_USAGE_PS='Usage: .\install.ps1 [-Lang en|ja] [-DryRun]
 
 Combines tasks.d\*.json and adds them to the global Zed tasks.json as a managed block.
 If the block is already there, it is replaced with the latest content.
-Other tasks and comments are left untouched. The tasks run zgt-run with Git Bash.
+Other tasks and comments are left untouched. The tasks run zgt-run through git
+(Git for Windows 2.31 or later on PATH).
 
   -Lang en|ja  Message language (default: the previous choice, or en on the first install)
   -DryRun      Only show the diff without writing
-  -Bash PATH   bash.exe of Git for Windows (default: the previous choice, or found automatically)
 
 Environment:
   ZED_CONFIG_DIR  Zed config directory (default: $env:APPDATA\Zed)'

@@ -60,7 +60,7 @@ if ($DryRun) {
   switch ($action) {
     'none' { Write-ZgtMessage NO_BLOCK $tasksFile }
     'rewrite' {
-      $git = Find-ZgtGit (Get-ZgtState $state 'bash')
+      $git = Find-ZgtGit
       if (-not $git) { Stop-Zgt (Get-ZgtMessage REQUIRE_CMD 'git') }
       $tmp = New-ZgtTempDir
       try {

@@ -78,30 +78,52 @@ zgt_protocol() {
   sed -n 's/^ZGT_PROTOCOL=\([0-9][0-9]*\)$/\1/p' "$ZGT_ROOT/bin/zgt-run"
 }
 
-# tasks.json の各タスクの command (sh -c '<起動スクリプト>') のひな形を出力する。
-# ZGT_ARGS_TOKEN の位置に、zgt-run に渡す引数 (sh の語) を build.sh が入れる。
+# tasks.json から zgt-run を起動するスクリプト (lib/launcher.sh) を、表示の言語と版で埋めて出力する。
+# 引数を入れる @ARGS@ (ZGT_ARGS_TOKEN) は残す (build.sh / install.ps1 がタスクごとに入れる)。
 #
 # Zed はタスクの command と args を引用符で囲まずに空白でつなぎ、利用者のシェル
-# ($SHELL -i -c、SSH 接続先では接続先のシェル) に渡す。zsh / bash / fish のどれでも
-# 同じ意味になるよう command は sh -c '...' の 1 語だけにし、ref やコミットの値は
+# ($SHELL -i -c、SSH 接続先では接続先のシェル) に渡す (crates/terminal_view の prepare_task_for_spawn)。
+# どのシェルでも同じ意味になるよう、command には値を入れず、ref やコミットの値は
 # env (ZGT_ARG1...) で渡す (ref 名の ; や $(...) をシェルに解釈させないためでもある)。
-# Zed は SSH 接続先のプロジェクトではタスクを接続先で実行するので、絶対パスではなく
-# 実行したマシンの $HOME から zgt-run を探す。無ければ入れ方を表示して 127 で終える。
-ZGT_ARGS_TOKEN='@ZGT_ARGS@'
-zgt_loader() {
-  local protocol
+ZGT_ARGS_TOKEN='@ARGS@'
+zgt_launcher() {
+  local protocol script
   protocol="$(zgt_protocol)"
   [ -n "$protocol" ] || zgt_die "ZGT_PROTOCOL not found in bin/zgt-run"
-  # 表示文は '...' の中の "..." に入り、printf の書式にもなる
+  # 表示文は "..." に入り、printf の書式にもなる。スクリプト全体は '...' に入る
   case "$MSG_RUNNER_MISSING" in
     *[\'\"\$\`\\]*) zgt_die "MSG_RUNNER_MISSING must not contain ' \" \$ \` \\" ;;
   esac
   case "$(printf '%s' "$MSG_RUNNER_MISSING" | sed 's/%s//g')" in
     *%*) zgt_die "MSG_RUNNER_MISSING must not contain % other than %s" ;;
   esac
-  # shellcheck disable=SC2016
-  printf 'sh -c '\''r="$HOME/.local/share/%s/zgt-run"; if [ -x "$r" ]; then export ZGT_REQUIRED_PROTOCOL=%s; exec "$r" %s; fi; printf "%s\\n" "$(uname -n)" >&2; exit 127'\''' \
-    "$ZGT_NAME" "$protocol" "$ZGT_ARGS_TOKEN" "$MSG_RUNNER_MISSING"
+  script="$(grep -v -e '^#' -e '^[[:space:]]*$' "$ZGT_ROOT/lib/launcher.sh")"
+  case "$script" in
+    *"$ZGT_ARGS_TOKEN"*) ;;
+    *) zgt_die "lib/launcher.sh: $ZGT_ARGS_TOKEN not found" ;;
+  esac
+  case "$script" in
+    *"
+"* | *\'*) zgt_die "lib/launcher.sh: the script must be one line without '" ;;
+  esac
+  script="$(zgt_subst "$script" @NAME@ "$ZGT_NAME")"
+  script="$(zgt_subst "$script" @PROTOCOL@ "$protocol")"
+  zgt_subst "$script" @MSG@ "$MSG_RUNNER_MISSING"
+}
+
+# zgt_subst <文字列> <探す文字列> <置き換え後>: 最初の 1 か所を (パターンではなく) 文字列として置き換える
+zgt_subst() {
+  case "$1" in
+    *"$2"*) printf '%s' "${1%%"$2"*}$3${1#*"$2"}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# macOS / Linux の tasks.json の command: sh -c '<起動スクリプト>' (@ARGS@ は残す)
+zgt_loader() {
+  local script
+  script="$(zgt_launcher)" || return 1
+  printf "sh -c '%s'" "$script"
 }
 
 # zgt_loader のうち引数より前の部分 (tasks.json の中で管理タスクを見分けるのに使う)
